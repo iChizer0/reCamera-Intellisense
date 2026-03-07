@@ -5,7 +5,8 @@ metadata: {
   "openclaw": {
     "emoji": "📷",
     "requires": {
-      "bins":["python3"]
+      "bins":["python3"],
+      "config_paths":["~/.recamera/devices.json"]
     }
   }
 }
@@ -18,7 +19,15 @@ user-invocable: true
 
 - `python3` (no external packages)
 - Reachable reCamera HTTP API (default port `80`)
-- Credentials stored in `~/.recamera/devices.json`
+- Credentials stored in `~/.recamera/devices.json` (created automatically; declared in skill metadata)
+
+## Security considerations
+
+- **Credential storage**: Device tokens are stored in `~/.recamera/devices.json`. Protect this file with appropriate permissions (`chmod 600`) and do not place unrelated secrets there.
+- **Plain HTTP transport**: Communication to devices uses HTTP (port 80) by default — data including images and tokens travels unencrypted. Configure HTTPS on your devices if operating on untrusted networks.
+- **Trusted networks only**: The skill polls devices and downloads snapshot/image files. Only use it with cameras on networks you trust.
+- **Camera-specific tokens**: Use dedicated per-camera tokens (`sk_xxx`). Do not reuse tokens shared with cloud services.
+- **Source review**: The bundle includes full Python sources under `scripts/`. Review them to verify behavior matches your expectations before granting autonomous execution.
 
 ## Scripts
 
