@@ -14,7 +14,7 @@ For detailed API signatures and CLI schemas, see [API Reference](skills/recamera
 
 ## Installation
 
-**Note: requires an unreleased reCamera (v2) hardware with an experimental firmware version, stay tuned for the public release!**
+**Note: requires an unreleased reCamera (v2) hardware with an experimental firmware, stay tuned for the public release!**
 
 ### Option A — ClawHub (recommended)
 
