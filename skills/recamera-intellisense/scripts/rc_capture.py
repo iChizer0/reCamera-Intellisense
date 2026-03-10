@@ -15,8 +15,6 @@ import os.path as osp
 import json
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional, TypedDict
 
@@ -24,17 +22,23 @@ SCRIPTS_DIR = osp.dirname(osp.abspath(__file__))
 if SCRIPTS_DIR not in sys.path:
     sys.path.append(SCRIPTS_DIR)
 
-from device_manager import (  # noqa: E402
-    CONNECTION_TIMEOUT,
+from rc_common import (  # noqa: E402
+    req_get_json,
+    req_post_json,
+    print_json_stdout,
+    validate_command_args,
+)
+from rc_device import (  # noqa: E402
     DeviceRecord,
     get_device_api_url,
     get_device_api_headers,
+    get_device_ssl_context,
+    resolve_device_from_args,
     fetch_file,
-    get_device,
 )
 
-# MARK: Public API (Important)
 
+# MARK: Public API (Important)
 __all__ = [
     "CaptureEvent",
     "CaptureStatus",
@@ -44,6 +48,7 @@ __all__ = [
     "stop_capture",
     "capture_image",
 ]
+
 
 # MARK: Types (Important)
 
@@ -75,7 +80,6 @@ class CaptureResult(TypedDict):
 
 
 # MARK: Constants and globals
-
 CAPTURE_OUTPUT_DEFAULT = "/mnt/rc_mmcblk0p8/reCamera"
 CAPTURE_FORMAT_IMAGE = "JPG"
 CAPTURE_POLL_INTERVAL = 0.5  # seconds between status polls
@@ -122,26 +126,24 @@ def get_capture_status(device: DeviceRecord) -> CaptureStatus:
     """
     url = get_device_api_url(device, "/cgi-bin/entry.cgi/record/capture/status")
     headers = get_device_api_headers(device)
-    try:
-        request = urllib.request.Request(url, headers=headers, method="GET")
-        with urllib.request.urlopen(request, timeout=CONNECTION_TIMEOUT) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        if not isinstance(data, dict):
-            raise RuntimeError("Invalid response format: expected an object")
-        raw_capture = data.get("dLastCapture")
-        return CaptureStatus(
-            last_capture=_parse_capture_event(raw_capture)
-            if isinstance(raw_capture, dict)
-            else None,
-            ready_to_start_new=bool(data.get("bReadyToStartNew", False)),
-            stop_requested=bool(data.get("bStopRequested", False)),
-        )
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(
-            f"Failed to get capture status: HTTP {e.code} {e.reason}"
-        ) from e
-    except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise RuntimeError(f"Failed to get capture status: {e}") from e
+    ssl_ctx = get_device_ssl_context(device)
+
+    status_data = req_get_json(
+        url,
+        headers,
+        error_prefix="Failed to get capture status",
+        ssl_context=ssl_ctx,
+    )
+    if not isinstance(status_data, dict):
+        raise RuntimeError("Invalid response format: expected an object")
+    raw_capture = status_data.get("dLastCapture")
+    return CaptureStatus(
+        last_capture=_parse_capture_event(raw_capture)
+        if isinstance(raw_capture, dict)
+        else None,
+        ready_to_start_new=bool(status_data.get("bReadyToStartNew", False)),
+        stop_requested=bool(status_data.get("bStopRequested", False)),
+    )
 
 
 def start_capture(
@@ -160,40 +162,28 @@ def start_capture(
     """
     url = get_device_api_url(device, "/cgi-bin/entry.cgi/record/capture/start")
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     payload: Dict[str, Any] = {
         "sOutput": output,
         "sFormat": format.upper(),
     }
     if video_length_seconds is not None:
         payload["iVideoLengthSeconds"] = int(video_length_seconds)
-    try:
-        request_headers = {
-            **headers,
-            "Content-Type": "application/json",
-        }
-        request_body = json.dumps(payload).encode("utf-8")
-        request = urllib.request.Request(
-            url,
-            data=request_body,
-            headers=request_headers,
-            method="POST",
+    capture_data = req_post_json(
+        url,
+        headers,
+        error_prefix="Failed to start capture",
+        payload=payload,
+        ssl_context=ssl_ctx,
+    )
+    if not isinstance(capture_data, dict) or capture_data.get("code", -1) != 0:
+        raise RuntimeError(
+            f"Failed to start capture: {capture_data.get('message', 'Unknown error')}"
         )
-        with urllib.request.urlopen(request, timeout=CONNECTION_TIMEOUT) as response:
-            result = json.loads(response.read().decode("utf-8"))
-        if not isinstance(result, dict) or result.get("code", -1) != 0:
-            raise RuntimeError(
-                f"Failed to start capture: {result.get('message', 'Unknown error')}"
-            )
-        raw_capture = result.get("dCapture")
-        if not isinstance(raw_capture, dict):
-            raise RuntimeError(
-                "Failed to start capture: missing capture event in response"
-            )
-        return _parse_capture_event(raw_capture)
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Failed to start capture: HTTP {e.code} {e.reason}") from e
-    except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise RuntimeError(f"Failed to start capture: {e}") from e
+    raw_capture = capture_data.get("dCapture")
+    if not isinstance(raw_capture, dict):
+        raise RuntimeError("Failed to start capture: missing capture event in response")
+    return _parse_capture_event(raw_capture)
 
 
 def stop_capture(device: DeviceRecord) -> None:
@@ -204,27 +194,17 @@ def stop_capture(device: DeviceRecord) -> None:
     """
     url = get_device_api_url(device, "/cgi-bin/entry.cgi/record/capture/stop")
     headers = get_device_api_headers(device)
-    try:
-        request_headers = {
-            **headers,
-            "Content-Type": "application/json",
-        }
-        request = urllib.request.Request(
-            url,
-            data=b"{}",
-            headers=request_headers,
-            method="POST",
+    ssl_ctx = get_device_ssl_context(device)
+    capture_data = req_post_json(
+        url,
+        headers,
+        error_prefix="Failed to stop capture",
+        ssl_context=ssl_ctx,
+    )
+    if not isinstance(capture_data, dict) or capture_data.get("code", -1) != 0:
+        raise RuntimeError(
+            f"Failed to stop capture: {capture_data.get('message', 'Unknown error')}"
         )
-        with urllib.request.urlopen(request, timeout=CONNECTION_TIMEOUT) as response:
-            result = json.loads(response.read().decode("utf-8"))
-        if not isinstance(result, dict) or result.get("code", -1) != 0:
-            raise RuntimeError(
-                f"Failed to stop capture: {result.get('message', 'Unknown error')}"
-            )
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Failed to stop capture: HTTP {e.code} {e.reason}") from e
-    except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise RuntimeError(f"Failed to stop capture: {e}") from e
 
 
 def capture_image(
@@ -300,7 +280,6 @@ def _capture_image_to_local_path(
 
 
 # MARK: CLI interface (Important)
-
 COMMANDS = {
     "get_capture_status": get_capture_status,
     "start_capture": start_capture,
@@ -330,7 +309,7 @@ COMMAND_SCHEMAS = {
 
 def _usage() -> str:
     return (
-        "Usage: python3 capture_manager.py <command> [json-args]\n\n"
+        "Usage: python3 rc_capture.py <command> [json-args]\n\n"
         "Commands:\n"
         '  get_capture_status  \'{"device_name":"cam1"}\'\n'
         f'  start_capture       \'{{"device_name":"cam1","output":"{CAPTURE_OUTPUT_DEFAULT}","format":"JPG"}}\'\n'
@@ -339,87 +318,13 @@ def _usage() -> str:
         '  capture_image       \'{"device_name":"cam1","local_save_path":"./capture.jpg"}\'\n'
         f'                      \'{{"device_name":"cam1","output":"{CAPTURE_OUTPUT_DEFAULT}","local_save_path":"./capture.jpg"}}\'\n\n'
         "Device resolution:\n"
-        '  - Provide either "device_name" (loads from device_manager) or inline "device" object\n'
+        '  - Provide either "device_name" or inline "device" object\n'
         '  - Inline device format: {"name":"...","host":"...","token":"..."[,"port":80]}\n\n'
     )
 
 
-def _serialize_json(value: Any) -> Any:
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, tuple):
-        return [_serialize_json(item) for item in value]
-    if isinstance(value, list):
-        return [_serialize_json(item) for item in value]
-    if isinstance(value, dict):
-        return {str(k): _serialize_json(v) for k, v in value.items()}
-    return value
-
-
-def _resolve_device_from_args(args: Dict[str, Any]) -> DeviceRecord:
-    if "device_name" in args and "device" in args:
-        raise ValueError("Provide either 'device_name' or 'device', not both.")
-
-    if "device_name" in args:
-        device_name = args["device_name"]
-        if not isinstance(device_name, str) or not device_name.strip():
-            raise ValueError("'device_name' must be a non-empty string.")
-        record = get_device(device_name.strip())
-        if record is None:
-            raise LookupError(
-                f"Device '{device_name}' not found. Use device_manager to add it first."
-            )
-        return record
-
-    if "device" in args:
-        raw = args["device"]
-        if not isinstance(raw, dict):
-            raise ValueError("'device' must be an object.")
-        name = raw.get("name", "inline-device")
-        host = raw.get("host")
-        token = raw.get("token")
-        if not isinstance(host, str) or not host.strip():
-            raise ValueError("'device.host' must be a non-empty string.")
-        if not isinstance(token, str) or not token.strip():
-            raise ValueError("'device.token' must be a non-empty string.")
-        resolved = DeviceRecord(name=str(name), host=host.strip(), token=token.strip())
-        if "port" in raw:
-            resolved["port"] = int(raw["port"])
-        return resolved
-
-    raise ValueError("Missing device reference. Provide 'device_name' or 'device'.")
-
-
-def _validate_command_args(command: str, args: Dict[str, Any]) -> None:
-    schema = COMMAND_SCHEMAS[command]
-    required = schema.get("required", set())
-    required_one_of = schema.get("required_one_of", [])
-    optional = schema.get("optional", set())
-
-    allowed = set(required) | set(optional)
-    for group in required_one_of:
-        allowed |= set(group)
-
-    unknown = sorted(set(args.keys()) - allowed)
-    if unknown:
-        raise ValueError(f"Unknown field(s): {', '.join(unknown)}")
-
-    missing = sorted(set(required) - set(args.keys()))
-    if missing:
-        raise ValueError(f"Missing required field(s): {', '.join(missing)}")
-
-    for group in required_one_of:
-        present = [key for key in group if key in args]
-        if len(present) == 0:
-            pretty = " or ".join(f"'{field}'" for field in group)
-            raise ValueError(f"Missing required field: provide {pretty}.")
-        if len(present) > 1:
-            pretty = ", ".join(f"'{field}'" for field in group)
-            raise ValueError(f"Provide only one of: {pretty}.")
-
-
 def _build_call_kwargs(command: str, args: Dict[str, Any]) -> Dict[str, Any]:
-    kwargs: Dict[str, Any] = {"device": _resolve_device_from_args(args)}
+    kwargs: Dict[str, Any] = {"device": resolve_device_from_args(args)}
 
     if command == "start_capture":
         if "output" in args:
@@ -446,10 +351,6 @@ def _build_call_kwargs(command: str, args: Dict[str, Any]) -> Dict[str, Any]:
             kwargs["poll_timeout"] = float(args["poll_timeout"])
 
     return kwargs
-
-
-def _print_json_stdout(payload: Any) -> None:
-    print(json.dumps(_serialize_json(payload), ensure_ascii=False))
 
 
 def main() -> None:
@@ -485,7 +386,7 @@ def main() -> None:
         args = loaded
 
     try:
-        _validate_command_args(command, args)
+        validate_command_args(command, args, COMMAND_SCHEMAS)
         call_kwargs = _build_call_kwargs(command, args)
     except LookupError as e:
         print(str(e), file=sys.stderr)
@@ -497,9 +398,9 @@ def main() -> None:
     try:
         result = COMMANDS[command](**call_kwargs)
         if result is None:
-            _print_json_stdout({"ok": True})
+            print_json_stdout({"ok": True})
         else:
-            _print_json_stdout(result)
+            print_json_stdout(result)
         sys.exit(0)
     except Exception as e:
         print(f"Error executing command '{command}': {e}", file=sys.stderr)

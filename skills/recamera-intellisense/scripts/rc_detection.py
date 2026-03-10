@@ -15,9 +15,6 @@ from __future__ import annotations
 import os.path as osp
 import json
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TypedDict, Tuple
@@ -26,17 +23,23 @@ SCRIPTS_DIR = osp.dirname(osp.abspath(__file__))
 if SCRIPTS_DIR not in sys.path:
     sys.path.append(SCRIPTS_DIR)
 
-from device_manager import (  # noqa: E402
-    CONNECTION_TIMEOUT,
+from rc_common import (  # noqa: E402
+    req_get_json,
+    req_post_json,
+    print_json_stdout,
+    validate_command_args,
+)
+from rc_device import (  # noqa: E402
     DeviceRecord,
     get_device_api_url,
     get_device_api_headers,
+    get_device_ssl_context,
+    resolve_device_from_args,
     fetch_file,
-    get_device,
 )
 
-# MARK: Public API (Important)
 
+# MARK: Public API (Important)
 __all__ = [
     "DetectionModel",
     "DetectionSchedule",
@@ -53,6 +56,7 @@ __all__ = [
     "clear_detection_events",
     "fetch_detection_event_image",
 ]
+
 
 # MARK: Types (Important)
 
@@ -93,7 +97,6 @@ class DetectionEvent(TypedDict):
 
 
 # MARK: Constants and globals
-
 DEBOUNCE_TIMES_DEFAULT = 3
 CONFIDENCE_RANGE_DEFAULT = (0.25, 1.0)
 FULL_REGION_POLYGON: list[Tuple[float, float]] = [
@@ -136,88 +139,16 @@ def _normalize_region_filter(
     return [list(FULL_REGION_POLYGON)] if not region_filter else region_filter
 
 
-def _request_json(
-    url: str,
-    headers: Dict[str, str],
-    *,
-    method: str,
-    error_prefix: str,
-    params: Optional[Dict[str, str]] = None,
-    payload: Optional[Dict[str, Any]] = None,
-) -> Any:
-    target_url = url
-    if params:
-        target_url = f"{url}?{urllib.parse.urlencode(params)}"
-    request_headers = dict(headers)
-    body: Optional[bytes] = None
-    if payload is not None:
-        request_headers["Content-Type"] = "application/json"
-        body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        target_url,
-        data=body,
-        headers=request_headers,
-        method=method,
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=CONNECTION_TIMEOUT) as response:
-            raw = response.read()
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"{error_prefix}: HTTP {e.code} {e.reason}") from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"{error_prefix}: {e.reason}") from e
-    except TimeoutError as e:
-        raise RuntimeError(
-            f"{error_prefix}: request timed out after {CONNECTION_TIMEOUT}s"
-        ) from e
-    try:
-        return json.loads(raw.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise RuntimeError(f"{error_prefix}: invalid JSON response") from e
-
-
-def _get_json(
-    url: str,
-    headers: Dict[str, str],
-    *,
-    error_prefix: str,
-    params: Optional[Dict[str, str]] = None,
-) -> Any:
-    return _request_json(
-        url,
-        headers,
-        method="GET",
-        error_prefix=error_prefix,
-        params=params,
-    )
-
-
-def _post_json(
-    url: str,
-    headers: Dict[str, str],
-    *,
-    error_prefix: str,
-    params: Optional[Dict[str, str]] = None,
-    payload: Optional[Dict[str, Any]] = None,
-) -> Any:
-    return _request_json(
-        url,
-        headers,
-        method="POST",
-        error_prefix=error_prefix,
-        params=params,
-        payload=payload,
-    )
-
-
 def _check_record_image(device: DeviceRecord) -> bool:
     url = get_device_api_url(device, "/cgi-bin/entry.cgi/record/rule/config")
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     try:
-        rules_data = _get_json(
+        rules_data = req_get_json(
             url,
             headers,
             error_prefix="Failed to get record image config",
+            ssl_context=ssl_ctx,
         )
         if not isinstance(rules_data, dict) or not rules_data.get(
             "bRuleEnabled", False
@@ -234,6 +165,7 @@ def _check_record_image(device: DeviceRecord) -> bool:
 def _enable_record_image(device: DeviceRecord) -> None:
     url = get_device_api_url(device, "/cgi-bin/entry.cgi/record/rule/config")
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     payload = {
         "bRuleEnabled": True,
         "dWriterConfig": {
@@ -241,11 +173,12 @@ def _enable_record_image(device: DeviceRecord) -> None:
             "sFormat": "JPG",
         },
     }
-    result = _post_json(
+    result = req_post_json(
         url,
         headers,
         payload=payload,
         error_prefix="Failed to enable record image",
+        ssl_context=ssl_ctx,
     )
     if not isinstance(result, dict) or result.get("code", -1) != 0:
         raise RuntimeError(
@@ -256,11 +189,13 @@ def _enable_record_image(device: DeviceRecord) -> None:
 def _check_storage_enabled(device: DeviceRecord) -> bool:
     url = get_device_api_url(device, "/cgi-bin/entry.cgi/record/storage/status")
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     try:
-        storage_info = _get_json(
+        storage_info = req_get_json(
             url,
             headers,
             error_prefix="Failed to get storage status",
+            ssl_context=ssl_ctx,
         )
         if not isinstance(storage_info, dict):
             return False
@@ -275,14 +210,16 @@ def _check_storage_enabled(device: DeviceRecord) -> bool:
 def _enable_default_storage(device: DeviceRecord) -> None:
     url = get_device_api_url(device, "/cgi-bin/entry.cgi/record/storage/config")
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     payload = {
         "dSelectSlotToEnable": {"sByDevPath": STORAGE_DEV_PATH_DEFAULT, "sByUUID": ""}
     }
-    result = _post_json(
+    result = req_post_json(
         url,
         headers,
         payload=payload,
         error_prefix="Failed to enable default storage",
+        ssl_context=ssl_ctx,
     )
     if not isinstance(result, dict) or result.get("code", -1) != 0:
         raise RuntimeError(
@@ -297,11 +234,12 @@ def _enable_default_storage(device: DeviceRecord) -> None:
             "bQuotaRotate": True,
         },
     }
-    result = _post_json(
+    result = req_post_json(
         url,
         headers,
         payload=payload,
         error_prefix="Failed to configure default storage",
+        ssl_context=ssl_ctx,
     )
     if not isinstance(result, dict) or result.get("code", -1) != 0:
         raise RuntimeError(
@@ -321,9 +259,13 @@ def get_detection_models_info(device: DeviceRecord) -> List[DetectionModel]:
     """
     url = get_device_api_url(device, "/cgi-bin/entry.cgi/model/list")
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     models_info: List[DetectionModel] = []
-    raw_models = _get_json(
-        url, headers, error_prefix="Failed to get detection models info"
+    raw_models = req_get_json(
+        url,
+        headers,
+        error_prefix="Failed to get detection models info",
+        ssl_context=ssl_ctx,
     )
     if not isinstance(raw_models, list):
         raise ValueError("Invalid response format: expected a list of models")
@@ -346,8 +288,12 @@ def get_detection_model(device: DeviceRecord) -> Optional[DetectionModel]:
     """
     url = get_device_api_url(device, "/cgi-bin/entry.cgi/model/inference")
     headers = get_device_api_headers(device)
-    model_info = _get_json(
-        url, headers, error_prefix="Failed to get active detection model"
+    ssl_ctx = get_device_ssl_context(device)
+    model_info = req_get_json(
+        url,
+        headers,
+        error_prefix="Failed to get active detection model",
+        ssl_context=ssl_ctx,
     )
     if not isinstance(model_info, dict) or model_info.get("iEnable", 0) == 0:
         return None
@@ -395,14 +341,16 @@ def set_detection_model(
             raise ValueError(f"Model name '{target_name}' not found on device.")
     url = get_device_api_url(device, "/cgi-bin/entry.cgi/model/inference")
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     params = {"id": str(int(target_model["id"]))}
     payload = {"iEnable": 1, "iFPS": 30, "sModel": target_model["name"]}
-    result = _post_json(
+    result = req_post_json(
         url,
         headers,
         params=params,
         payload=payload,
         error_prefix="Failed to set active detection model",
+        ssl_context=ssl_ctx,
     )
     if not isinstance(result, dict) or result.get("code", -1) != 0:
         raise RuntimeError(
@@ -421,8 +369,12 @@ def get_detection_schedule(device: DeviceRecord) -> Optional[DetectionSchedule]:
         device, "/cgi-bin/entry.cgi/record/record/rule/schedule-rule-config"
     )
     headers = get_device_api_headers(device)
-    schedule_data = _get_json(
-        url, headers, error_prefix="Failed to get detection schedule"
+    ssl_ctx = get_device_ssl_context(device)
+    schedule_data = req_get_json(
+        url,
+        headers,
+        error_prefix="Failed to get detection schedule",
+        ssl_context=ssl_ctx,
     )
     if (
         not isinstance(schedule_data, dict)
@@ -453,6 +405,7 @@ def set_detection_schedule(
         device, "/cgi-bin/entry.cgi/record/record/rule/schedule-rule-config"
     )
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     activate_weekdays = []
     if schedule is not None:
         for start, end in schedule["active_weekdays"]:
@@ -467,11 +420,12 @@ def set_detection_schedule(
         "bEnable": True if schedule is not None else False,
         "lActiveWeekdays": activate_weekdays,
     }
-    result = _post_json(
+    result = req_post_json(
         url,
         headers,
         payload=payload,
         error_prefix="Failed to set detection schedule",
+        ssl_context=ssl_ctx,
     )
     if not isinstance(result, dict) or result.get("code", -1) != 0:
         raise RuntimeError(
@@ -497,8 +451,11 @@ def get_detection_rules(device: DeviceRecord) -> List[DetectionRule]:
         device, "/cgi-bin/entry.cgi/record/rule/record-rule-config"
     )
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     rules: List[DetectionRule] = []
-    rules_data = _get_json(url, headers, error_prefix="Failed to get detection rules")
+    rules_data = req_get_json(
+        url, headers, error_prefix="Failed to get detection rules", ssl_context=ssl_ctx
+    )
     if (
         not isinstance(rules_data, dict)
         or rules_data.get("sCurrentSelected", "") != "INFERENCE_SET"
@@ -546,6 +503,7 @@ def set_detection_rules(device: DeviceRecord, rules: List[DetectionRule]) -> Non
         device, "/cgi-bin/entry.cgi/record/rule/record-rule-config"
     )
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     payload = {
         "sCurrentSelected": "INFERENCE_SET",
         "lInferenceSet": [
@@ -562,11 +520,12 @@ def set_detection_rules(device: DeviceRecord, rules: List[DetectionRule]) -> Non
             for rule in rules
         ],
     }
-    result = _post_json(
+    result = req_post_json(
         url,
         headers,
         payload=payload,
         error_prefix="Failed to set detection rules",
+        ssl_context=ssl_ctx,
     )
     if not isinstance(result, dict) or result.get("code", -1) != 0:
         raise RuntimeError(
@@ -588,16 +547,18 @@ def get_detection_events(
     """
     url = get_device_api_url(device, "/api/v1/events")
     headers = get_device_api_headers(device)
+    ssl_ctx = get_device_ssl_context(device)
     params: Dict[str, str] = {}
     if start_unix_ms is not None:
         params["start"] = str(int(start_unix_ms))
     if end_unix_ms is not None:
         params["end"] = str(int(end_unix_ms))
-    raw_events: Any = _get_json(
+    raw_events: Any = req_get_json(
         url,
         headers,
         params=params or None,
         error_prefix="Failed to get detection events",
+        ssl_context=ssl_ctx,
     )
     if not isinstance(raw_events, list):
         raise RuntimeError("Failed to get detection events: invalid response format")
@@ -642,10 +603,12 @@ def clear_detection_events(device: DeviceRecord) -> None:
     """
     url = get_device_api_url(device, "/api/v1/events/clear")
     headers = get_device_api_headers(device)
-    result = _post_json(
+    ssl_ctx = get_device_ssl_context(device)
+    result = req_post_json(
         url,
         headers,
         error_prefix="Failed to clear detection events",
+        ssl_context=ssl_ctx,
     )
     if not isinstance(result, dict):
         raise RuntimeError("Failed to clear detection events: invalid response format")
@@ -680,7 +643,6 @@ def _fetch_detection_event_image_to_local_path(
 
 
 # MARK: CLI interface (Important)
-
 COMMANDS = {
     "get_detection_models_info": get_detection_models_info,
     "get_detection_model": get_detection_model,
@@ -741,7 +703,7 @@ COMMAND_SCHEMAS = {
 
 def _usage() -> str:
     return (
-        "Usage: python3 detection_manager.py <command> [json-args]\n\n"
+        "Usage: python3 rc_detection.py <command> [json-args]\n\n"
         "Commands:\n"
         '  get_detection_models_info   \'{"device_name":"cam1"}\'\n'
         '  get_detection_model         \'{"device_name":"cam1"}\'\n'
@@ -757,87 +719,13 @@ def _usage() -> str:
         '  clear_detection_events      \'{"device_name":"cam1"}\'\n'
         '  fetch_detection_event_image \'{"device_name":"cam1","snapshot_path":"/mnt/sdcard/..jpg","local_save_path":"./event.jpg"}\'\n\n'
         "Device resolution:\n"
-        '  - Provide either "device_name" (loads from device_manager) or inline "device" object\n'
+        '  - Provide either "device_name" or inline "device" object\n'
         '  - Inline device format: {"name":"...","host":"...","token":"..."[,"port":80]}\n\n'
     )
 
 
-def _serialize_json(value: Any) -> Any:
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, tuple):
-        return [_serialize_json(item) for item in value]
-    if isinstance(value, list):
-        return [_serialize_json(item) for item in value]
-    if isinstance(value, dict):
-        return {str(k): _serialize_json(v) for k, v in value.items()}
-    return value
-
-
-def _resolve_device_from_args(args: Dict[str, Any]) -> DeviceRecord:
-    if "device_name" in args and "device" in args:
-        raise ValueError("Provide either 'device_name' or 'device', not both.")
-
-    if "device_name" in args:
-        device_name = args["device_name"]
-        if not isinstance(device_name, str) or not device_name.strip():
-            raise ValueError("'device_name' must be a non-empty string.")
-        record = get_device(device_name.strip())
-        if record is None:
-            raise LookupError(
-                f"Device '{device_name}' not found. Add it via device_manager first."
-            )
-        return record
-
-    if "device" in args:
-        raw = args["device"]
-        if not isinstance(raw, dict):
-            raise ValueError("'device' must be a JSON object.")
-        name = raw.get("name", "inline-device")
-        host = raw.get("host")
-        token = raw.get("token")
-        if not isinstance(host, str) or not host.strip():
-            raise ValueError("'device.host' must be a non-empty string.")
-        if not isinstance(token, str) or not token.strip():
-            raise ValueError("'device.token' must be a non-empty string.")
-        resolved = DeviceRecord(name=str(name), host=host.strip(), token=token.strip())
-        if "port" in raw:
-            resolved["port"] = int(raw["port"])
-        return resolved
-
-    raise ValueError("Missing device reference. Provide 'device_name' or 'device'.")
-
-
-def _validate_command_args(command: str, args: Dict[str, Any]) -> None:
-    schema = COMMAND_SCHEMAS[command]
-    required = schema.get("required", set())
-    required_one_of = schema.get("required_one_of", [])
-    optional = schema.get("optional", set())
-
-    allowed = set(required) | set(optional)
-    for group in required_one_of:
-        allowed |= set(group)
-
-    unknown = sorted(set(args.keys()) - allowed)
-    if unknown:
-        raise ValueError(f"Unknown field(s): {', '.join(unknown)}")
-
-    missing = sorted(set(required) - set(args.keys()))
-    if missing:
-        raise ValueError(f"Missing required field(s): {', '.join(missing)}")
-
-    for group in required_one_of:
-        present = [key for key in group if key in args]
-        if len(present) == 0:
-            pretty = " or ".join(f"'{field}'" for field in group)
-            raise ValueError(f"Missing required field: provide {pretty}.")
-        if len(present) > 1:
-            pretty = ", ".join(f"'{field}'" for field in group)
-            raise ValueError(f"Provide only one of: {pretty}.")
-
-
 def _build_call_kwargs(command: str, args: Dict[str, Any]) -> Dict[str, Any]:
-    kwargs: Dict[str, Any] = {"device": _resolve_device_from_args(args)}
+    kwargs: Dict[str, Any] = {"device": resolve_device_from_args(args)}
 
     if command == "set_detection_model":
         if "model_id" in args:
@@ -882,10 +770,6 @@ def _build_call_kwargs(command: str, args: Dict[str, Any]) -> Dict[str, Any]:
     return kwargs
 
 
-def _print_json_stdout(payload: Any) -> None:
-    print(json.dumps(_serialize_json(payload), ensure_ascii=False))
-
-
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print(_usage())
@@ -919,7 +803,7 @@ def main() -> None:
         args = loaded
 
     try:
-        _validate_command_args(command, args)
+        validate_command_args(command, args, COMMAND_SCHEMAS)
         call_kwargs = _build_call_kwargs(command, args)
     except LookupError as e:
         print(str(e), file=sys.stderr)
@@ -931,7 +815,7 @@ def main() -> None:
     try:
         result = COMMANDS[command](**call_kwargs)
         if result is not None:
-            _print_json_stdout(result)
+            print_json_stdout(result)
         sys.exit(0)
     except Exception as e:
         print(f"Error executing command '{command}': {e}", file=sys.stderr)

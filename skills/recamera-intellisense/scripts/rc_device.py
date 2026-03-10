@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-reCamera Devices Manager.
+reCamera Device Manager.
 
 Used for reCamera device connection profiles (host, token) management, local device
 discovery, add, update, remove and list devices stored in ~/.recamera/devices.json with
@@ -18,14 +18,22 @@ import sys
 import tempfile
 import http.client
 import socket
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
+
+
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPTS_DIR not in sys.path:
+    sys.path.append(SCRIPTS_DIR)
+
+from rc_common import CONNECTION_TIMEOUT, print_json_stdout, validate_command_args  # noqa: E402
+
 
 # MARK: Public API (Important)
-
 __all__ = [
     "DeviceRecord",
     "detect_local_device",
@@ -36,6 +44,7 @@ __all__ = [
     "list_devices",
 ]
 
+
 # MARK: Types (Important)
 
 
@@ -43,16 +52,18 @@ class DeviceRecord(TypedDict):
     name: str
     host: str
     token: str
+    protocol: str  # one of "http" or "https", default to "http" if not specified
+    allow_unsecured: (
+        bool  # whether to allow self-signed certs when using HTTPS, default to True
+    )
 
 
 # MARK: Constants and globals
-
 RECAMERA_DIR = Path.home() / ".recamera"
 DEVICE_PROFILES_PATH = RECAMERA_DIR / "devices.json"
 TOKEN_PATTERN = re.compile(r"^sk_[A-Za-z0-9_\-]+$")
 TEST_LOCAL_PORT = 16384
 TEST_PATH = "/api/v1/generate-204"
-CONNECTION_TIMEOUT = 3  # seconds
 
 
 # MARK: Internal helpers
@@ -76,7 +87,7 @@ def _ensure_dir() -> None:
     RECAMERA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _load_devices() -> Dict[str, Dict[str, str]]:
+def _load_devices() -> Dict[str, Dict[str, Any]]:
     _ensure_dir()
     if not DEVICE_PROFILES_PATH.exists():
         _save_devices({})
@@ -100,7 +111,7 @@ def _load_devices() -> Dict[str, Dict[str, str]]:
             f"Credential store is invalid: {DEVICE_PROFILES_PATH} must contain a JSON object."
         )
 
-    normalized: Dict[str, Dict[str, str]] = {}
+    normalized: Dict[str, Dict[str, Any]] = {}
     for name, info in data.items():
         if not isinstance(name, str) or not isinstance(info, dict):
             continue
@@ -108,11 +119,18 @@ def _load_devices() -> Dict[str, Dict[str, str]]:
         token = info.get("token")
         if not isinstance(host, str) or not isinstance(token, str):
             continue
-        normalized[name] = {"host": host.strip(), "token": token}
+        entry: Dict[str, Any] = {"host": host.strip(), "token": token}
+        protocol = info.get("protocol")
+        if isinstance(protocol, str) and protocol in ("http", "https"):
+            entry["protocol"] = protocol
+        allow_unsecured = info.get("allow_unsecured")
+        if isinstance(allow_unsecured, bool):
+            entry["allow_unsecured"] = allow_unsecured
+        normalized[name] = entry
     return normalized
 
 
-def _save_devices(devices: Dict[str, Dict[str, str]]) -> None:
+def _save_devices(devices: Dict[str, Dict[str, Any]]) -> None:
     _ensure_dir()
     fd, tmp_path = tempfile.mkstemp(
         dir=str(RECAMERA_DIR), prefix=".devices_", suffix=".json"
@@ -167,7 +185,18 @@ def _validate_token(token: str) -> Optional[str]:
     return None
 
 
-def _test_connection(host: str, token: str) -> Optional[str]:
+def _validate_protocol(protocol: str) -> Optional[str]:
+    if protocol not in ("http", "https"):
+        return f"Invalid protocol: '{protocol}'. Must be 'http' or 'https'."
+    return None
+
+
+def _test_connection(
+    host: str,
+    token: str,
+    protocol: str = "http",
+    allow_unsecured: bool = True,
+) -> Optional[str]:
     try:
         connect_host = host.strip()
         try:
@@ -175,10 +204,17 @@ def _test_connection(host: str, token: str) -> Optional[str]:
             connect_host = f"[{connect_host}]"
         except OSError:
             pass
-        port = 80  # TODO: support HTTPS with self-signed certs
-        conn = http.client.HTTPConnection(
-            connect_host, port, timeout=CONNECTION_TIMEOUT
-        )
+        use_https = protocol == "https"
+        port = 443 if use_https else 80
+        if use_https:
+            ssl_context = _build_ssl_context(allow_unsecured)
+            conn = http.client.HTTPSConnection(
+                connect_host, port, timeout=CONNECTION_TIMEOUT, context=ssl_context
+            )
+        else:
+            conn = http.client.HTTPConnection(
+                connect_host, port, timeout=CONNECTION_TIMEOUT
+            )
         conn.request(
             "GET",
             TEST_PATH,
@@ -214,21 +250,78 @@ def _test_connection(host: str, token: str) -> Optional[str]:
         )
 
 
+def _build_ssl_context(allow_unsecured: bool = True) -> ssl.SSLContext:
+    """Build an SSL context for HTTPS connections."""
+    if allow_unsecured:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return ssl.create_default_context()
+
+
 # MARK: Internal API functions
+
+
+def get_device_ssl_context(device: DeviceRecord) -> Optional[ssl.SSLContext]:
+    """Return an SSL context if the device uses HTTPS, otherwise None."""
+    protocol = device.get("protocol", "http")
+    if protocol != "https":
+        return None
+    return _build_ssl_context(device.get("allow_unsecured", True))
 
 
 def get_device_api_url(device: DeviceRecord, endpoint: str) -> str:
     host = str(device["host"]).strip()
+    protocol = device.get("protocol", "http")
     port = None
     if isinstance(device, dict):
         port = device.get("port")
     if port is None or str(port).strip() == "":
-        return f"http://{host}{endpoint}"
-    return f"http://{host}:{int(port)}{endpoint}"
+        return f"{protocol}://{host}{endpoint}"
+    return f"{protocol}://{host}:{int(port)}{endpoint}"
 
 
 def get_device_api_headers(device: DeviceRecord) -> Dict[str, str]:
     return {"Authorization": f"{device['token']}"}
+
+
+def resolve_device_from_args(args: Dict[str, Any]) -> DeviceRecord:
+    if "device_name" in args and "device" in args:
+        raise ValueError("Provide either 'device_name' or 'device', not both.")
+
+    if "device_name" in args:
+        device_name = args["device_name"]
+        if not isinstance(device_name, str) or not device_name.strip():
+            raise ValueError("'device_name' must be a non-empty string.")
+        record = get_device(device_name.strip())
+        if record is None:
+            raise LookupError(f"Device '{device_name}' not found. Add it first.")
+        return record
+
+    if "device" in args:
+        raw = args["device"]
+        if not isinstance(raw, dict):
+            raise ValueError("'device' must be an object.")
+        name = raw.get("name", "inline-device")
+        host = raw.get("host")
+        token = raw.get("token")
+        if not isinstance(host, str) or not host.strip():
+            raise ValueError("'device.host' must be a non-empty string.")
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("'device.token' must be a non-empty string.")
+        resolved = DeviceRecord(
+            name=str(name),
+            host=host.strip(),
+            token=token.strip(),
+            protocol=str(raw.get("protocol", "http")),
+            allow_unsecured=bool(raw.get("allow_unsecured", True)),
+        )
+        if "port" in raw:
+            resolved["port"] = int(raw["port"])
+        return resolved
+
+    raise ValueError("Missing device reference. Provide 'device_name' or 'device'.")
 
 
 def fetch_file(device: DeviceRecord, remote_path: str) -> bytes:
@@ -237,8 +330,11 @@ def fetch_file(device: DeviceRecord, remote_path: str) -> bytes:
         headers=get_device_api_headers(device),
         method="GET",
     )
+    ssl_context = get_device_ssl_context(device)
     try:
-        with urllib.request.urlopen(request, timeout=CONNECTION_TIMEOUT) as response:
+        with urllib.request.urlopen(
+            request, timeout=CONNECTION_TIMEOUT, context=ssl_context
+        ) as response:
             content = response.read()
             content_type = response.headers.get("Content-Type", "")
             if "application/json" in content_type.lower():
@@ -300,10 +396,22 @@ def get_device(name: str) -> Optional[DeviceRecord]:
     if name not in devices:
         return None
     entry = devices[name]
-    return DeviceRecord(name=name, host=entry["host"], token=entry["token"])
+    return DeviceRecord(
+        name=name,
+        host=entry["host"],
+        token=entry["token"],
+        protocol=entry.get("protocol", "http"),
+        allow_unsecured=entry.get("allow_unsecured", True),
+    )
 
 
-def add_device(name: str, host: str, token: str) -> None:
+def add_device(
+    name: str,
+    host: str,
+    token: str,
+    protocol: str = "http",
+    allow_unsecured: bool = True,
+) -> None:
     """
     Add a new camera with the given *name*, *host*, and *token*.
 
@@ -322,21 +430,35 @@ def add_device(name: str, host: str, token: str) -> None:
     err = _validate_token(token)
     if err:
         raise ValueError(err)
-    err = _test_connection(host, token)
+    err = _validate_protocol(protocol)
+    if err:
+        raise ValueError(err)
+    err = _test_connection(
+        host, token, protocol=protocol, allow_unsecured=allow_unsecured
+    )
     if err:
         raise ConnectionError(err)
     devices = _load_devices()
-    devices[name] = {"host": host.strip(), "token": token.strip()}
+    devices[name] = {
+        "host": host.strip(),
+        "token": token.strip(),
+        "protocol": protocol,
+        "allow_unsecured": allow_unsecured,
+    }
     _save_devices(devices)
 
 
 def update_device(
-    name: str, host: Optional[str] = None, token: Optional[str] = None
+    name: str,
+    host: Optional[str] = None,
+    token: Optional[str] = None,
+    protocol: Optional[str] = None,
+    allow_unsecured: Optional[bool] = None,
 ) -> None:
     """
-    Update the *host* and/or *token* of an existing camera.
+    Update the *host*, *token*, *protocol*, and/or *allow_unsecured* of an existing camera.
 
-    At least one of *host* or *token* must be provided. A connectivity test is
+    At least one of the optional fields must be provided. A connectivity test is
     performed with the resulting credentials before saving.
 
     Return None on success, otherwise raises when exceptions occur.
@@ -344,8 +466,8 @@ def update_device(
     err = _validate_name(name)
     if err:
         raise ValueError(err)
-    if host is None and token is None:
-        raise ValueError("Nothing to update — provide at least a new host or token.")
+    if host is None and token is None and protocol is None and allow_unsecured is None:
+        raise ValueError("Nothing to update — provide at least one field to change.")
     if host is not None:
         err = _validate_host(host)
         if err:
@@ -355,6 +477,10 @@ def update_device(
         err = _validate_token(token)
         if err:
             raise ValueError(err)
+    if protocol is not None:
+        err = _validate_protocol(protocol)
+        if err:
+            raise ValueError(err)
     devices = _load_devices()
     if name not in devices:
         raise ValueError(
@@ -362,11 +488,23 @@ def update_device(
         )
     new_host = host if host is not None else devices[name]["host"]
     new_token = token if token is not None else devices[name]["token"]
-    err = _test_connection(new_host, new_token)
+    new_protocol = (
+        protocol if protocol is not None else devices[name].get("protocol", "http")
+    )
+    new_allow_unsecured = (
+        allow_unsecured
+        if allow_unsecured is not None
+        else devices[name].get("allow_unsecured", True)
+    )
+    err = _test_connection(
+        new_host, new_token, protocol=new_protocol, allow_unsecured=new_allow_unsecured
+    )
     if err:
         raise ConnectionError(err)
     devices[name]["host"] = new_host.strip()
     devices[name]["token"] = new_token.strip()
+    devices[name]["protocol"] = new_protocol
+    devices[name]["allow_unsecured"] = new_allow_unsecured
     _save_devices(devices)
 
 
@@ -396,14 +534,19 @@ def list_devices() -> List[DeviceRecord]:
     """
     devices = _load_devices()
     items: List[DeviceRecord] = [
-        DeviceRecord(name=name, host=info.get("host", ""), token=info.get("token", ""))
+        DeviceRecord(
+            name=name,
+            host=info.get("host", ""),
+            token=info.get("token", ""),
+            protocol=info.get("protocol", "http"),
+            allow_unsecured=info.get("allow_unsecured", True),
+        )
         for name, info in sorted(devices.items(), key=lambda item: item[0].lower())
     ]
     return items
 
 
 # MARK: CLI interface (Important)
-
 COMMANDS = {
     "detect_local_device": detect_local_device,
     "get_device": get_device,
@@ -415,10 +558,13 @@ COMMANDS = {
 COMMAND_SCHEMAS = {
     "detect_local_device": {"required": set(), "optional": {"host"}},
     "get_device": {"required": {"name"}, "optional": set()},
-    "add_device": {"required": {"name", "host", "token"}, "optional": set()},
+    "add_device": {
+        "required": {"name", "host", "token"},
+        "optional": {"protocol", "allow_unsecured"},
+    },
     "update_device": {
         "required": {"name"},
-        "optional": {"host", "token"},
+        "optional": {"host", "token", "protocol", "allow_unsecured"},
     },
     "remove_device": {"required": {"name"}, "optional": set()},
     "list_devices": {"required": set(), "optional": set()},
@@ -427,15 +573,21 @@ COMMAND_SCHEMAS = {
 
 def _usage() -> str:
     return (
-        "Usage: python3 device_manager.py <command> [json-args]\n\n"
+        "Usage: python3 rc_device.py <command> [json-args]\n\n"
         "Commands:\n"
         "  detect_local_device\n"
         '  get_device          \'{"name": "..."}\'\n'
         '  add_device          \'{"name": "...", "host": "...", "token": "..."}\'\n'
-        '  update_device       \'{"name": "...", "host": "...", "token": "..."}\'\n'
+        '                      \'{"name": "...", "host": "...", "token": "...", "protocol": "https", "allow_unsecured": true}\' \n'
+        '  update_device       \'{"name": "...", "host": "...", "token": "..."}\' \n'
+        '                      \'{"name": "...", "protocol": "https", "allow_unsecured": false}\' \n'
         '  remove_device       \'{"name": "..."}\'\n'
         "  list_devices\n\n"
     )
+
+
+def _build_call_kwargs(command: str, args: dict) -> dict:
+    return args
 
 
 def main() -> None:
@@ -445,63 +597,51 @@ def main() -> None:
 
     command = sys.argv[1]
     if command not in COMMANDS:
-        print(f"Unknown command: '{command}'. Available: {', '.join(COMMANDS)}.")
-        sys.exit(1)
+        print(
+            f"Unknown command: '{command}'. Available: {', '.join(COMMANDS.keys())}.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
-    args = None
-    func = COMMANDS[command]
-    schema = COMMAND_SCHEMAS[command]
-    require_args = bool(schema["required"])
-    if require_args and len(sys.argv) < 3:
-        print(f"Command '{command}' requires a JSON object argument.")
-        sys.exit(1)
-    elif len(sys.argv) > 3:
-        print(f"Command '{command}' accepts at most one JSON object argument.")
-        sys.exit(1)
-    elif len(sys.argv) == 3:
+    if len(sys.argv) > 3:
+        print(
+            f"Command '{command}' accepts at most one JSON object argument.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    args: Dict[str, Any] = {}
+    if len(sys.argv) == 3:
         try:
-            args = json.loads(sys.argv[2])
+            loaded = json.loads(sys.argv[2])
         except json.JSONDecodeError as e:
-            print(f"Invalid JSON argument: {e}")
-            sys.exit(1)
-        if not isinstance(args, dict):
-            print("Command arguments must be a JSON object.")
-            sys.exit(1)
-
-        schema = COMMAND_SCHEMAS[command]
-        required = schema["required"]
-        allowed = required | schema["optional"]
-
-        missing = sorted(required - set(args.keys()))
-        unknown = sorted(set(args.keys()) - allowed)
-        if missing or unknown:
-            parts = []
-            if missing:
-                parts.append(f"missing required field(s): {', '.join(missing)}")
-            if unknown:
-                parts.append(f"unknown field(s): {', '.join(unknown)}")
-            print(
-                f"Invalid arguments for command '{command}' — " + "; ".join(parts) + "."
-            )
-            sys.exit(1)
+            print(f"Invalid JSON argument: {e}", file=sys.stderr)
+            sys.exit(2)
+        if not isinstance(loaded, dict):
+            print("Command arguments must be a JSON object.", file=sys.stderr)
+            sys.exit(2)
+        args = loaded
 
     try:
-        result = func(**args) if args is not None else func()
-
-        if result is None:
-            sys.exit(0)
-        elif isinstance(result, bool):
-            sys.exit(0 if result else 1)
-        elif isinstance(result, (str, dict, list)):
-            print(json.dumps(result, ensure_ascii=False))
-            sys.exit(0)
-        else:
-            print(result)
-            sys.exit(0)
-
+        validate_command_args(command, args, COMMAND_SCHEMAS)
+        call_kwargs = _build_call_kwargs(command, args)
+    except LookupError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(3)
     except Exception as e:
-        print(f"Error executing command '{command}': {e}")
-        sys.exit(1)
+        print(f"Invalid arguments for command '{command}': {e}", file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        result = COMMANDS[command](**call_kwargs)
+        if result is None:
+            print_json_stdout({"ok": True})
+        else:
+            print_json_stdout(result)
+        sys.exit(0)
+    except Exception as e:
+        print(f"Error executing command '{command}': {e}", file=sys.stderr)
+        sys.exit(4)
 
 
 if __name__ == "__main__":
