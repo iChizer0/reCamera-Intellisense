@@ -2,11 +2,11 @@
 
 ## Contents
 
-- [device_manager.py](#device_managerpy) — credentials, connectivity, file download (internal)
-- [detection_manager.py](#detection_managerpy) — models, schedules, rules, events, snapshots
-- [capture_manager.py](#capture_managerpy) — capture status, start/stop, one-shot image
+- [rc_device.py](#reCamera-Device-API) — credentials, connectivity, file download (internal)
+- [rc_detection.py](#reCamera-Detection-API) — models, schedules, rules, events, snapshots
+- [rc_capture.py](#reCamera-Capture-API) — capture status, start/stop, one-shot image
 
-## `device_manager.py`
+## reCamera Device API
 
 | Function | Signature | Returns | Errors |
 |---|---|---|---|
@@ -29,7 +29,7 @@ detect_local_device()
 list_devices()
 ```
 
-## `detection_manager.py`
+## reCamera Detection API
 
 All commands require exactly one of `device_name` (preferred) or inline `device`.
 
@@ -58,7 +58,7 @@ clear_detection_events()
 fetch_detection_event_image(snapshot_path, local_save_path)
 ```
 
-## `capture_manager.py`
+## reCamera Capture API
 
 All commands require exactly one of `device_name` (preferred) or inline `device`.
 

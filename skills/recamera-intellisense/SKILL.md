@@ -7,7 +7,8 @@ metadata: {
     "requires": {
       "bins":["python3"]
     }
-  }
+  },
+  "version": "1.0.2"
 }
 user-invocable: true
 ---
@@ -24,9 +25,10 @@ user-invocable: true
 
 All scripts live under `{baseDir}/scripts` and accept **one JSON object** as CLI argument (optional for `detect_local_device` and `list_devices`).
 
-- **`device_manager.py`**: add/update/remove/list/get device credentials, file download
-- **`detection_manager.py`**: models, schedule, rules, events, event-image fetch
-- **`capture_manager.py`**: capture status/start/stop, one-shot image capture
+- **`rc_device.py`**: add/update/remove/list/get device credentials, file download
+- **`rc_detection.py`**: models, schedule, rules, events, event-image fetch
+- **`rc_capture.py`**: capture status/start/stop, one-shot image capture
+- **`rc_common.py`**: shared HTTP helpers, JSON serialization, argument validation
 
 **Full API signatures and CLI schemas**: See [REFERENCE.md](REFERENCE.md)
 
@@ -58,14 +60,14 @@ reCamera Task Progress
 Run from `{baseDir}`:
 
 ```bash
-python3 scripts/device_manager.py add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxxxxxx"}'
-python3 scripts/device_manager.py list_devices
-python3 scripts/detection_manager.py get_detection_models_info '{"device_name":"cam1"}'
-python3 scripts/detection_manager.py set_detection_model '{"device_name":"cam1","model_id":0}'
-python3 scripts/detection_manager.py get_detection_events '{"device_name":"cam1"}'
-python3 scripts/detection_manager.py clear_detection_events '{"device_name":"cam1"}'
-python3 scripts/detection_manager.py fetch_detection_event_image '{"device_name":"cam1","snapshot_path":"/mnt/.../event.jpg","local_save_path":"./event.jpg"}'
-python3 scripts/capture_manager.py capture_image '{"device_name":"cam1","local_save_path":"./capture.jpg"}'
+python3 scripts/rc_device.py add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxxxxxx"}'
+python3 scripts/rc_device.py list_devices
+python3 scripts/rc_detection.py get_detection_models_info '{"device_name":"cam1"}'
+python3 scripts/rc_detection.py set_detection_model '{"device_name":"cam1","model_id":0}'
+python3 scripts/rc_detection.py get_detection_events '{"device_name":"cam1"}'
+python3 scripts/rc_detection.py clear_detection_events '{"device_name":"cam1"}'
+python3 scripts/rc_detection.py fetch_detection_event_image '{"device_name":"cam1","snapshot_path":"/mnt/.../event.jpg","local_save_path":"./event.jpg"}'
+python3 scripts/rc_capture.py capture_image '{"device_name":"cam1","local_save_path":"./capture.jpg"}'
 ```
 
 ## Python pattern (long-running automation)
@@ -75,8 +77,8 @@ from datetime import datetime, timezone
 import sys
 sys.path.append("./scripts")
 
-from device_manager import get_device
-from detection_manager import get_detection_events
+from rc_device import get_device
+from rc_detection import get_detection_events
 
 device = get_device("cam1")
 events = get_detection_events(device, start_unix_ms=int(datetime.now(timezone.utc).timestamp() * 1000))
