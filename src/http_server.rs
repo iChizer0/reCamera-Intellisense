@@ -22,15 +22,28 @@ fn json_response(status: StatusCode, body: &str) -> Response<BoxBody> {
     Response::builder()
         .status(status)
         .header("Content-Type", "application/json")
-        .body(Full::new(Bytes::from(body.to_string())).map_err(|never| match never {}).boxed())
+        .body(
+            Full::new(Bytes::from(body.to_string()))
+                .map_err(|never| match never {})
+                .boxed(),
+        )
         .unwrap()
+}
+
+fn json_error_response(status: StatusCode, msg: &str) -> Response<BoxBody> {
+    let body = serde_json::json!({ "error": msg }).to_string();
+    json_response(status, &body)
 }
 
 fn no_content_response() -> Response<BoxBody> {
     use http_body_util::BodyExt;
     Response::builder()
         .status(StatusCode::NO_CONTENT)
-        .body(Full::new(Bytes::new()).map_err(|never| match never {}).boxed())
+        .body(
+            Full::new(Bytes::new())
+                .map_err(|never| match never {})
+                .boxed(),
+        )
         .unwrap()
 }
 
@@ -134,10 +147,7 @@ async fn handle_get_file(
     let canonical_requested = match fs::canonicalize(path).await {
         Ok(p) => p,
         Err(e) => {
-            return json_response(
-                StatusCode::NOT_FOUND,
-                &format!(r#"{{"error":"File not found: {e}"}}"#),
-            );
+            return json_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}"));
         }
     };
 
@@ -146,10 +156,10 @@ async fn handle_get_file(
         .unwrap_or_else(|_| allowed_file_prefix.to_path_buf());
 
     if !canonical_requested.starts_with(&canonical_prefix) {
-        return json_response(
+        return json_error_response(
             StatusCode::FORBIDDEN,
             &format!(
-                r#"{{"error":"Path is outside allowed prefix: {}"}}"#,
+                "Path is outside allowed prefix: {}",
                 canonical_prefix.display()
             ),
         );
@@ -159,10 +169,7 @@ async fn handle_get_file(
     let metadata = match fs::metadata(&canonical_requested).await {
         Ok(m) => m,
         Err(e) => {
-            return json_response(
-                StatusCode::NOT_FOUND,
-                &format!(r#"{{"error":"File not found: {e}"}}"#),
-            );
+            return json_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}"));
         }
     };
 
@@ -209,9 +216,9 @@ async fn handle_get_file(
                 use std::io::SeekFrom;
                 use tokio::io::AsyncSeekExt;
                 if let Err(e) = file.seek(SeekFrom::Start(start_byte)).await {
-                    return json_response(
+                    return json_error_response(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        &format!(r#"{{"error":"Failed to seek file: {e}"}}"#),
+                        &format!("Failed to seek file: {e}"),
                     );
                 }
             }
@@ -219,11 +226,13 @@ async fn handle_get_file(
             let max_read = (end_byte - start_byte).saturating_add(1);
             use tokio::io::AsyncReadExt;
             let stream = tokio_util::io::ReaderStream::new(file.take(max_read));
+            use futures_util::stream::StreamExt;
             use http_body_util::{BodyExt, StreamBody};
             use hyper::body::Frame;
-            use futures_util::stream::StreamExt;
 
-            let stream_body = StreamBody::new(stream.map(|result: Result<bytes::Bytes, std::io::Error>| result.map(Frame::data)));
+            let stream_body = StreamBody::new(
+                stream.map(|result: Result<bytes::Bytes, std::io::Error>| result.map(Frame::data)),
+            );
             let content_type = guess_content_type(path_str);
             let mut builder = Response::builder()
                 .status(status)
@@ -238,13 +247,11 @@ async fn handle_get_file(
                 );
             }
 
-            builder
-                .body(BodyExt::boxed(stream_body))
-                .unwrap()
+            builder.body(BodyExt::boxed(stream_body)).unwrap()
         }
-        Err(e) => json_response(
+        Err(e) => json_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &format!(r#"{{"error":"Failed to open file: {e}"}}"#),
+            &format!("Failed to open file: {e}"),
         ),
     }
 }

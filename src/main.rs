@@ -109,7 +109,7 @@ async fn main() {
             "Invalid HTTP address '{}': {e}, using default",
             args.http_addr
         );
-        "0.0.0.0:16384".parse().unwrap()
+        "127.0.0.1:16384".parse().unwrap()
     });
     let tcp_allowed_prefix = allowed_file_prefix.clone();
     let tcp_handle = tokio::spawn(async move {

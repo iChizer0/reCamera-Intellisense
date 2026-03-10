@@ -11,18 +11,18 @@
 | Function | Signature | Returns | Errors |
 |---|---|---|---|
 | `detect_local_device` | `(host="127.0.0.1")` | `Optional[str]` — host or `None` | — |
-| `add_device` | `(name, host, token)` | `None` | `ValueError`, `ConnectionError`, `RuntimeError` |
-| `update_device` | `(name, host=None, token=None)` | `None` | `ValueError`, `ConnectionError` |
+| `add_device` | `(name, host, token, protocol="http", allow_unsecured=True, port=None)` | `None` | `ValueError`, `ConnectionError`, `RuntimeError` |
+| `update_device` | `(name, host=None, token=None, protocol=None, allow_unsecured=None, port=None)` | `None` | `ValueError`, `ConnectionError` |
 | `remove_device` | `(name)` | `bool` — `False` if not found | — |
-| `get_device` | `(name)` | `Optional[DeviceRecord]` `{name,host,token}` | — |
+| `get_device` | `(name)` | `Optional[DeviceRecord]` `{name,host,token,protocol,allow_unsecured,port}` | — |
 | `list_devices` | `()` | `List[DeviceRecord]` — sorted | — |
 | `fetch_file` *(internal)* | `(device, remote_path)` | `bytes` | `RuntimeError` |
 
 ### CLI argument schemas
 
 ```text
-add_device(name, host, token)
-update_device(name, [host], [token])
+add_device(name, host, token, [protocol], [allow_unsecured], [port])
+update_device(name, [host], [token], [protocol], [allow_unsecured], [port])
 remove_device(name)
 get_device(name)
 detect_local_device()

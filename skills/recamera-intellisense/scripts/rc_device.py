@@ -56,6 +56,7 @@ class DeviceRecord(TypedDict):
     allow_unsecured: (
         bool  # whether to allow self-signed certs when using HTTPS, default to True
     )
+    port: Optional[int]  # custom port, None means default (80 for http, 443 for https)
 
 
 # MARK: Constants and globals
@@ -126,6 +127,9 @@ def _load_devices() -> Dict[str, Dict[str, Any]]:
         allow_unsecured = info.get("allow_unsecured")
         if isinstance(allow_unsecured, bool):
             entry["allow_unsecured"] = allow_unsecured
+        port = info.get("port")
+        if isinstance(port, int) and port > 0:
+            entry["port"] = port
         normalized[name] = entry
     return normalized
 
@@ -178,8 +182,9 @@ def _validate_token(token: str) -> Optional[str]:
     if not token or not isinstance(token, str):
         return "Token must be a non-empty string in the format 'sk_xxxxxxxxx'."
     if not TOKEN_PATTERN.match(token.strip()):
+        masked = token[:6] + "***" if len(token) > 6 else "***"
         return (
-            f"Invalid token format: '{token}'. "
+            f"Invalid token format: '{masked}'. "
             "Expected format: 'sk_xxxxxxxxx' where 'sk_xxxxxxxxx' is your secret key."
         )
     return None
@@ -274,10 +279,8 @@ def get_device_ssl_context(device: DeviceRecord) -> Optional[ssl.SSLContext]:
 def get_device_api_url(device: DeviceRecord, endpoint: str) -> str:
     host = str(device["host"]).strip()
     protocol = device.get("protocol", "http")
-    port = None
-    if isinstance(device, dict):
-        port = device.get("port")
-    if port is None or str(port).strip() == "":
+    port = device.get("port")
+    if port is None:
         return f"{protocol}://{host}{endpoint}"
     return f"{protocol}://{host}:{int(port)}{endpoint}"
 
@@ -316,9 +319,8 @@ def resolve_device_from_args(args: Dict[str, Any]) -> DeviceRecord:
             token=token.strip(),
             protocol=str(raw.get("protocol", "http")),
             allow_unsecured=bool(raw.get("allow_unsecured", True)),
+            port=int(raw["port"]) if "port" in raw else None,
         )
-        if "port" in raw:
-            resolved["port"] = int(raw["port"])
         return resolved
 
     raise ValueError("Missing device reference. Provide 'device_name' or 'device'.")
@@ -402,6 +404,7 @@ def get_device(name: str) -> Optional[DeviceRecord]:
         token=entry["token"],
         protocol=entry.get("protocol", "http"),
         allow_unsecured=entry.get("allow_unsecured", True),
+        port=entry.get("port"),
     )
 
 
@@ -411,6 +414,7 @@ def add_device(
     token: str,
     protocol: str = "http",
     allow_unsecured: bool = True,
+    port: Optional[int] = None,
 ) -> None:
     """
     Add a new camera with the given *name*, *host*, and *token*.
@@ -439,12 +443,18 @@ def add_device(
     if err:
         raise ConnectionError(err)
     devices = _load_devices()
+    if name in devices:
+        raise ValueError(
+            f"Device '{name}' already exists. Use update_device to modify it, or remove_device first."
+        )
     devices[name] = {
         "host": host.strip(),
         "token": token.strip(),
         "protocol": protocol,
         "allow_unsecured": allow_unsecured,
     }
+    if port is not None:
+        devices[name]["port"] = int(port)
     _save_devices(devices)
 
 
@@ -454,6 +464,7 @@ def update_device(
     token: Optional[str] = None,
     protocol: Optional[str] = None,
     allow_unsecured: Optional[bool] = None,
+    port: Optional[int] = None,
 ) -> None:
     """
     Update the *host*, *token*, *protocol*, and/or *allow_unsecured* of an existing camera.
@@ -466,7 +477,13 @@ def update_device(
     err = _validate_name(name)
     if err:
         raise ValueError(err)
-    if host is None and token is None and protocol is None and allow_unsecured is None:
+    if (
+        host is None
+        and token is None
+        and protocol is None
+        and allow_unsecured is None
+        and port is None
+    ):
         raise ValueError("Nothing to update — provide at least one field to change.")
     if host is not None:
         err = _validate_host(host)
@@ -505,6 +522,8 @@ def update_device(
     devices[name]["token"] = new_token.strip()
     devices[name]["protocol"] = new_protocol
     devices[name]["allow_unsecured"] = new_allow_unsecured
+    if port is not None:
+        devices[name]["port"] = int(port)
     _save_devices(devices)
 
 
@@ -540,6 +559,7 @@ def list_devices() -> List[DeviceRecord]:
             token=info.get("token", ""),
             protocol=info.get("protocol", "http"),
             allow_unsecured=info.get("allow_unsecured", True),
+            port=info.get("port"),
         )
         for name, info in sorted(devices.items(), key=lambda item: item[0].lower())
     ]
@@ -560,11 +580,11 @@ COMMAND_SCHEMAS = {
     "get_device": {"required": {"name"}, "optional": set()},
     "add_device": {
         "required": {"name", "host", "token"},
-        "optional": {"protocol", "allow_unsecured"},
+        "optional": {"protocol", "allow_unsecured", "port"},
     },
     "update_device": {
         "required": {"name"},
-        "optional": {"host", "token", "protocol", "allow_unsecured"},
+        "optional": {"host", "token", "protocol", "allow_unsecured", "port"},
     },
     "remove_device": {"required": {"name"}, "optional": set()},
     "list_devices": {"required": set(), "optional": set()},
@@ -587,6 +607,8 @@ def _usage() -> str:
 
 
 def _build_call_kwargs(command: str, args: dict) -> dict:
+    if "port" in args:
+        args["port"] = int(args["port"])
     return args
 
 
