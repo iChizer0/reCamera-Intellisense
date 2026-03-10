@@ -112,7 +112,9 @@ def serialize_json(value: Any) -> Any:
 
 
 def print_json_stdout(payload: Any) -> None:
-    print(json.dumps(serialize_json(payload), ensure_ascii=False))
+    print(
+        json.dumps(serialize_json(payload), separators=(",", ":"), ensure_ascii=False)
+    )
 
 
 def validate_command_args(
