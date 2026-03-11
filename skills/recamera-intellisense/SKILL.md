@@ -1,6 +1,6 @@
 ---
 name: recamera-intellisense
-description: Registers reCamera devices, configures AI detection models/rules/schedules, monitors and clears detection events, fetches event snapshots, and runs manual image/video capture. Uses local Python CLI scripts with JSON I/O. Triggers on camera onboarding, detection setup, event polling, snapshot capture, or reCamera automation tasks.
+description: Registers reCamera devices, configures AI detection models/rules/schedules, monitors and clears detection events, fetches event snapshots, runs manual image/video capture, and controls GPIO pins. Uses local Python CLI scripts with JSON I/O. Triggers on camera onboarding, detection setup, event polling, snapshot capture, GPIO control, or reCamera automation tasks.
 metadata: {
   "openclaw": {
     "emoji": "📷",
@@ -28,6 +28,7 @@ All scripts live under `{baseDir}/scripts` and accept **one JSON object** as CLI
 - **`rc_device.py`**: add/update/remove/list/get device credentials, file download
 - **`rc_detection.py`**: models, schedule, rules, events, event-image fetch
 - **`rc_capture.py`**: capture status/start/stop, one-shot image capture
+- **`rc_gpio.py`**: GPIO pin listing, info, set/get value (auto-configures direction)
 - **`rc_common.py`**: shared HTTP helpers, JSON serialization, argument validation
 
 **Full API signatures and CLI schemas**: See [REFERENCE.md](REFERENCE.md)
@@ -68,6 +69,10 @@ python3 scripts/rc_detection.py get_detection_events '{"device_name":"cam1"}'
 python3 scripts/rc_detection.py clear_detection_events '{"device_name":"cam1"}'
 python3 scripts/rc_detection.py fetch_detection_event_image '{"device_name":"cam1","snapshot_path":"/mnt/.../event.jpg","local_save_path":"./event.jpg"}'
 python3 scripts/rc_capture.py capture_image '{"device_name":"cam1","local_save_path":"./capture.jpg"}'
+python3 scripts/rc_gpio.py list_gpios '{"device_name":"cam1"}'
+python3 scripts/rc_gpio.py get_gpio_info '{"device_name":"cam1","pin_id":42}'
+python3 scripts/rc_gpio.py set_gpio_value '{"device_name":"cam1","pin_id":42,"value":1}'
+python3 scripts/rc_gpio.py get_gpio_value '{"device_name":"cam1","pin_id":42}'
 ```
 
 ## Python pattern (long-running automation)
@@ -79,9 +84,13 @@ sys.path.append("./scripts")
 
 from rc_device import get_device
 from rc_detection import get_detection_events
+from rc_gpio import list_gpios, set_gpio_value, get_gpio_value
 
 device = get_device("cam1")
 events = get_detection_events(device, start_unix_ms=int(datetime.now(timezone.utc).timestamp() * 1000))
+pins = list_gpios(device)
+set_gpio_value(device, pin_id=42, value=1)
+current = get_gpio_value(device, pin_id=42)
 ```
 
 Use a loop with checkpointed `start_unix_ms` for incremental polling.
@@ -112,6 +121,13 @@ Use a loop with checkpointed `start_unix_ms` for incremental polling.
 - **Python**: `capture_image` → persist returned `content` bytes.
 - **Alternative**: `fetch_detection_event_image` with `local_save_path`.
 
+### GPIO control
+
+1. `list_gpios` to discover available pins and their capabilities.
+2. `set_gpio_value` to set a pin high/low (auto-configures as output).
+3. `get_gpio_value` to read a pin (auto-configures as input with debounce).
+4. `get_gpio_info` for detailed pin state/settings.
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -122,3 +138,4 @@ Use a loop with checkpointed `start_unix_ms` for incremental polling.
 | Empty rules or events | Enable rule/storage prerequisites; check region filter; poll more frequently |
 | Image fetch failed | Use fresh `snapshot_path`; data may rotate out |
 | Import errors in Python mode | Run from `{baseDir}`; append `./scripts` to `sys.path` |
+| GPIO value rejected | Value must be 0 or 1; verify pin_id exists via `list_gpios` |

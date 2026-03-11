@@ -1,3 +1,4 @@
+import enum
 import json
 import ssl
 import urllib.parse
@@ -98,6 +99,8 @@ def req_post_json(
 
 
 def serialize_json(value: Any) -> Any:
+    if isinstance(value, enum.Enum):
+        return value.value
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, tuple):
@@ -112,8 +115,19 @@ def serialize_json(value: Any) -> Any:
 
 
 def print_json_stdout(payload: Any) -> None:
+    def clear_none(d: Any) -> Any:
+        if isinstance(d, dict):
+            return {k: clear_none(v) for k, v in d.items() if v is not None}
+        if isinstance(d, list):
+            return [clear_none(item) for item in d]
+        return d
+
     print(
-        json.dumps(serialize_json(payload), separators=(",", ":"), ensure_ascii=False)
+        json.dumps(
+            serialize_json(clear_none(payload)),
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
     )
 
 

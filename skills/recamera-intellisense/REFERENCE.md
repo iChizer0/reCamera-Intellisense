@@ -5,6 +5,7 @@
 - [rc_device.py](#reCamera-Device-API) — credentials, connectivity, file download (internal)
 - [rc_detection.py](#reCamera-Detection-API) — models, schedules, rules, events, snapshots
 - [rc_capture.py](#reCamera-Capture-API) — capture status, start/stop, one-shot image
+- [rc_gpio.py](#reCamera-GPIO-API) — GPIO pin control and monitoring
 
 ## reCamera Device API
 
@@ -77,6 +78,40 @@ start_capture([output], [format], [video_length_seconds])
 capture_image(local_save_path, [output], [poll_interval], [poll_timeout])
 get_capture_status()
 stop_capture()
+```
+
+## reCamera GPIO API
+
+All commands require exactly one of `device_name` (preferred) or inline `device`.
+
+| Function | Signature | Returns | Errors |
+|---|---|---|---|
+| `list_gpios` | `(device)` | `List[PinDescriptor]` — all pins with info and settings | `RuntimeError` |
+| `get_gpio_info` | `(device, pin_id)` | `PinDescriptor` `{pin_id, info, settings}` | `RuntimeError` |
+| `set_gpio_value` | `(device, pin_id, value)` | `int` — the value set (0 or 1) | `ValueError`, `RuntimeError` |
+| `get_gpio_value` | `(device, pin_id, debounce_ms=100)` | `int` — current value (0 or 1) | `RuntimeError` |
+
+### Types
+
+- **`PinDescriptor`**: `{pin_id: int, info: PinInfo, settings: PinSettings}`
+- **`PinInfo`**: `{name: str, chip: str, line: int, capabilities: List[GPIOState]}`
+- **`PinSettings`**: `{state: GPIOState, edge: EdgeDetect, debounce_ms: int}`
+- **`GPIOState`**: `error` | `disabled` | `push-pull` | `open-drain` | `open-source` | `floating` | `pull-up` | `pull-down`
+- **`EdgeDetect`**: `none` | `rising` | `falling` | `both`
+
+### Behavior notes
+
+- `set_gpio_value` auto-configures the pin as output (push-pull) if not already in an output state.
+- `get_gpio_value` auto-configures the pin as input (floating) if not already in an input state, and applies the given `debounce_ms`.
+
+### CLI argument schemas
+
+```text
+All: exactly one of device_name or device
+list_gpios()
+get_gpio_info(pin_id)
+set_gpio_value(pin_id, value)
+get_gpio_value(pin_id, [debounce_ms])
 ```
 
 ## Common runtime failures
