@@ -561,6 +561,10 @@ def get_detection_events(
         ssl_context=ssl_ctx,
     )
     if not isinstance(raw_events, list):
+        if isinstance(raw_events, dict):
+            raise RuntimeError(
+                f"Failed to get detection events: {raw_events.get('message', 'Unknown error')}"
+            )
         raise RuntimeError("Failed to get detection events: invalid response format")
     events: List[DetectionEvent] = []
     for item in raw_events:
