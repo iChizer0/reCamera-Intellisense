@@ -1,5 +1,5 @@
 [package]
-name = "monitor"
+name = "recamera-intellisense-daemon"
 version = "0.1.0"
 edition = "2021"
 
@@ -17,6 +17,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 url = "2"
+tokio-util = { version = "0.7.18", features = ["io"] }
 
 [profile.release]
 opt-level = "s"

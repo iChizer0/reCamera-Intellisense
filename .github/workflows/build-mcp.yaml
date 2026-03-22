@@ -1,0 +1,90 @@
+name: Build MCP Server
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: recamera-intellisense-mcp
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: recamera-intellisense-mcp-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact: recamera-intellisense-mcp-linux-aarch64
+            cross: true
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: recamera-intellisense-mcp-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: recamera-intellisense-mcp-windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: recamera-intellisence-mcp
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: recamera-intellisence-mcp
+          key: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@cross
+
+      - name: Build with cross
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build with cargo
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir staging
+          cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} staging/
+          tar czf ${{ matrix.artifact }}.tar.gz -C staging .
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path staging
+          Copy-Item "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe" staging/
+          Compress-Archive -Path staging/* -DestinationPath "${{ matrix.artifact }}.zip"
+
+      - name: Upload artifact (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: recamera-intellisence-mcp/${{ matrix.artifact }}.tar.gz
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: recamera-intellisence-mcp/${{ matrix.artifact }}.zip

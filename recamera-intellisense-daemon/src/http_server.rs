@@ -15,22 +15,35 @@ use tracing::{error, info};
 
 use crate::event_store::SharedEventStore;
 
-const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
-
-type BoxBody = Full<Bytes>;
+type BoxBody = http_body_util::combinators::BoxBody<Bytes, std::io::Error>;
 
 fn json_response(status: StatusCode, body: &str) -> Response<BoxBody> {
+    use http_body_util::BodyExt;
     Response::builder()
         .status(status)
         .header("Content-Type", "application/json")
-        .body(Full::new(Bytes::from(body.to_string())))
+        .body(
+            Full::new(Bytes::from(body.to_string()))
+                .map_err(|never| match never {})
+                .boxed(),
+        )
         .unwrap()
 }
 
+fn json_error_response(status: StatusCode, msg: &str) -> Response<BoxBody> {
+    let body = serde_json::json!({ "error": msg }).to_string();
+    json_response(status, &body)
+}
+
 fn no_content_response() -> Response<BoxBody> {
+    use http_body_util::BodyExt;
     Response::builder()
         .status(StatusCode::NO_CONTENT)
-        .body(Full::new(Bytes::new()))
+        .body(
+            Full::new(Bytes::new())
+                .map_err(|never| match never {})
+                .boxed(),
+        )
         .unwrap()
 }
 
@@ -61,7 +74,10 @@ async fn handle_request(
         (Method::GET, "/api/v1/events/size") => handle_get_events_size(&query, &store).await,
         (Method::POST, "/api/v1/events/clear") => handle_clear_events(&store).await,
         (Method::GET, "/api/v1/file") => {
-            handle_get_file(&query, allowed_file_prefix.as_path()).await
+            handle_get_file(&req, &query, allowed_file_prefix.as_path()).await
+        }
+        (Method::DELETE, "/api/v1/file") => {
+            handle_delete_file(&query, allowed_file_prefix.as_path()).await
         }
         _ => json_response(StatusCode::NOT_FOUND, r#"{"error":"Not found"}"#),
     };
@@ -107,6 +123,7 @@ async fn handle_clear_events(store: &SharedEventStore) -> Response<BoxBody> {
 }
 
 async fn handle_get_file(
+    req: &Request<Incoming>,
     query: &HashMap<String, String>,
     allowed_file_prefix: &Path,
 ) -> Response<BoxBody> {
@@ -133,10 +150,7 @@ async fn handle_get_file(
     let canonical_requested = match fs::canonicalize(path).await {
         Ok(p) => p,
         Err(e) => {
-            return json_response(
-                StatusCode::NOT_FOUND,
-                &format!(r#"{{"error":"File not found: {e}"}}"#),
-            );
+            return json_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}"));
         }
     };
 
@@ -145,10 +159,10 @@ async fn handle_get_file(
         .unwrap_or_else(|_| allowed_file_prefix.to_path_buf());
 
     if !canonical_requested.starts_with(&canonical_prefix) {
-        return json_response(
+        return json_error_response(
             StatusCode::FORBIDDEN,
             &format!(
-                r#"{{"error":"Path is outside allowed prefix: {}"}}"#,
+                "Path is outside allowed prefix: {}",
                 canonical_prefix.display()
             ),
         );
@@ -158,10 +172,7 @@ async fn handle_get_file(
     let metadata = match fs::metadata(&canonical_requested).await {
         Ok(m) => m,
         Err(e) => {
-            return json_response(
-                StatusCode::NOT_FOUND,
-                &format!(r#"{{"error":"File not found: {e}"}}"#),
-            );
+            return json_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}"));
         }
     };
 
@@ -169,32 +180,145 @@ async fn handle_get_file(
         return json_response(StatusCode::BAD_REQUEST, r#"{"error":"Path is not a file"}"#);
     }
 
-    if metadata.len() > MAX_FILE_SIZE {
+    // Read file contents using streaming
+    match fs::File::open(&canonical_requested).await {
+        Ok(mut file) => {
+            // Check for Range header to support resuming download
+            let mut start_byte = 0;
+            let file_size = metadata.len();
+            let mut end_byte = file_size.saturating_sub(1);
+            let mut status = StatusCode::OK;
+
+            if let Some(range_header) = req.headers().get(hyper::header::RANGE) {
+                if let Ok(range_str) = range_header.to_str() {
+                    if let Some(range) = range_str.strip_prefix("bytes=") {
+                        let parts: Vec<&str> = range.split('-').collect();
+                        if let Some(start_str) = parts.first() {
+                            if let Ok(start) = start_str.parse::<u64>() {
+                                start_byte = start;
+                                status = StatusCode::PARTIAL_CONTENT;
+                            }
+                        }
+                        if parts.len() > 1 {
+                            if let Ok(end) = parts[1].parse::<u64>() {
+                                end_byte = std::cmp::min(end, end_byte);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if start_byte > file_size {
+                return json_response(
+                    StatusCode::RANGE_NOT_SATISFIABLE,
+                    r#"{"error":"Invalid range"}"#,
+                );
+            }
+
+            if start_byte > 0 {
+                use std::io::SeekFrom;
+                use tokio::io::AsyncSeekExt;
+                if let Err(e) = file.seek(SeekFrom::Start(start_byte)).await {
+                    return json_error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &format!("Failed to seek file: {e}"),
+                    );
+                }
+            }
+
+            let max_read = (end_byte - start_byte).saturating_add(1);
+            use tokio::io::AsyncReadExt;
+            let stream = tokio_util::io::ReaderStream::new(file.take(max_read));
+            use futures_util::stream::StreamExt;
+            use http_body_util::{BodyExt, StreamBody};
+            use hyper::body::Frame;
+
+            let stream_body = StreamBody::new(
+                stream.map(|result: Result<bytes::Bytes, std::io::Error>| result.map(Frame::data)),
+            );
+            let content_type = guess_content_type(path_str);
+            let mut builder = Response::builder()
+                .status(status)
+                .header("Content-Type", content_type)
+                .header("Accept-Ranges", "bytes")
+                .header("Content-Length", max_read.to_string());
+
+            if status == StatusCode::PARTIAL_CONTENT {
+                builder = builder.header(
+                    "Content-Range",
+                    format!("bytes {}-{}/{}", start_byte, end_byte, file_size),
+                );
+            }
+
+            builder.body(BodyExt::boxed(stream_body)).unwrap()
+        }
+        Err(e) => json_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("Failed to open file: {e}"),
+        ),
+    }
+}
+
+async fn handle_delete_file(
+    query: &HashMap<String, String>,
+    allowed_file_prefix: &Path,
+) -> Response<BoxBody> {
+    let path_str = match query.get("path") {
+        Some(p) => p,
+        None => {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":"Missing 'path' query parameter"}"#,
+            );
+        }
+    };
+
+    let path = Path::new(path_str);
+
+    if !path.is_absolute() {
         return json_response(
             StatusCode::BAD_REQUEST,
+            r#"{"error":"Path must be absolute"}"#,
+        );
+    }
+
+    let canonical_requested = match fs::canonicalize(path).await {
+        Ok(p) => p,
+        Err(e) => {
+            return json_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}"));
+        }
+    };
+
+    let canonical_prefix = fs::canonicalize(allowed_file_prefix)
+        .await
+        .unwrap_or_else(|_| allowed_file_prefix.to_path_buf());
+
+    if !canonical_requested.starts_with(&canonical_prefix) {
+        return json_error_response(
+            StatusCode::FORBIDDEN,
             &format!(
-                r#"{{"error":"File size ({}) exceeds maximum allowed size ({})"}}"#,
-                metadata.len(),
-                MAX_FILE_SIZE
+                "Path is outside allowed prefix: {}",
+                canonical_prefix.display()
             ),
         );
     }
 
-    // Read file contents
-    match fs::read(&canonical_requested).await {
-        Ok(data) => {
-            // Guess content type from extension
-            let content_type = guess_content_type(path_str);
-            Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", content_type)
-                .header("Content-Length", data.len().to_string())
-                .body(Full::new(Bytes::from(data)))
-                .unwrap()
+    let metadata = match fs::metadata(&canonical_requested).await {
+        Ok(m) => m,
+        Err(e) => {
+            return json_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}"));
         }
-        Err(e) => json_response(
+    };
+
+    if !metadata.is_file() {
+        return json_response(StatusCode::BAD_REQUEST, r#"{"error":"Path is not a file"}"#);
+    }
+
+    match fs::remove_file(&canonical_requested).await {
+        Ok(()) => json_response(StatusCode::OK, r#"{"status":"ok"}"#),
+        Err(e) => json_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &format!(r#"{{"error":"Failed to read file: {e}"}}"#),
+            &format!("Failed to delete file: {e}"),
         ),
     }
 }

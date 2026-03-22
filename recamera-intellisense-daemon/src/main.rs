@@ -14,7 +14,10 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "monitor", about = "Monitor daemon for rule/file events")]
+#[command(
+    name = "recamera-intellisense-daemon",
+    about = "reCamera Intellisense daemon for rule/file events"
+)]
 struct Args {
     /// WebSocket URL to connect to for events
     #[arg(long, default_value = "ws://127.0.0.1:16383/api/v1/record/events")]
@@ -74,7 +77,7 @@ async fn main() {
         allowed_file_prefix = PathBuf::from("/mnt");
     }
 
-    info!("Monitor daemon starting");
+    info!("reCamera Intellisense daemon starting");
     info!(
         ws_url = %args.ws_url,
         http_addr = %args.http_addr,
@@ -109,7 +112,7 @@ async fn main() {
             "Invalid HTTP address '{}': {e}, using default",
             args.http_addr
         );
-        "0.0.0.0:16384".parse().unwrap()
+        "127.0.0.1:16384".parse().unwrap()
     });
     let tcp_allowed_prefix = allowed_file_prefix.clone();
     let tcp_handle = tokio::spawn(async move {
@@ -189,5 +192,5 @@ async fn main() {
     }
     let _ = tick_handle.await;
 
-    info!("Monitor daemon stopped");
+    info!("reCamera Intellisense daemon stopped");
 }

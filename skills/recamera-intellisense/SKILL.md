@@ -1,13 +1,10 @@
 ---
 name: recamera-intellisense
-description: Registers reCamera devices, configures AI detection models/rules/schedules, monitors and clears detection events, fetches event snapshots, and runs manual image/video capture. Uses local Python CLI scripts with JSON I/O. Triggers on camera onboarding, detection setup, event polling, snapshot capture, or reCamera automation tasks.
+description: Manages reCamera devices via MCP server tools — registers devices, configures AI detection models/rules/schedules, queries detection events, fetches event snapshots, captures images/video, and controls GPIO pins. Triggers on camera onboarding, detection setup, event monitoring, image capture, GPIO control, or any reCamera task.
 metadata: {
   "openclaw": {
     "emoji": "📷",
-    "requires": {
-      "bins":["python3"],
-      "config_paths":["~/.recamera/devices.json"]
-    }
+    "version": "2.0.0"
   }
 }
 user-invocable: true
@@ -15,117 +12,86 @@ user-invocable: true
 
 # reCamera Intellisense
 
-## Requirements
+MCP server providing tools for [reCamera V2](https://wiki.seeedstudio.com/recamera/) device management, AI detection, image/video capture, and GPIO control.
 
-- `python3` (no external packages)
-- Reachable reCamera HTTP API (default port `80`)
-- Credentials stored in `~/.recamera/devices.json` (created automatically; declared in skill metadata)
+## Setup
 
-## Security considerations
+The MCP server binary (`recamera-intellisense-mcp`) must be installed and configured.
 
-- **Credential storage**: Device tokens are stored in `~/.recamera/devices.json`. Protect this file with appropriate permissions (`chmod 600`) and do not place unrelated secrets there.
-- **Plain HTTP transport**: Communication to devices uses HTTP (port 80) by default — data including images and tokens travels unencrypted. Configure HTTPS on your devices if operating on untrusted networks.
-- **Trusted networks only**: The skill polls devices and downloads snapshot/image files. Only use it with cameras on networks you trust.
-- **Camera-specific tokens**: Use dedicated per-camera tokens (`sk_xxx`). Do not reuse tokens shared with cloud services.
-- **Source review**: The bundle includes full Python sources under `scripts/`. Review them to verify behavior matches your expectations before granting autonomous execution.
-
-## Scripts
-
-All scripts live under `{baseDir}/scripts` and accept **one JSON object** as CLI argument (optional for `detect_local_device` and `list_devices`).
-
-- **`device_manager.py`**: add/update/remove/list/get device credentials, file download
-- **`detection_manager.py`**: models, schedule, rules, events, event-image fetch
-- **`capture_manager.py`**: capture status/start/stop, one-shot image capture
-
-**Full API signatures and CLI schemas**: See [REFERENCE.md](REFERENCE.md)
-
-## Agent rules
-
-1. Always pass complete JSON; never use interactive prompts.
-2. Use exactly one of `device_name` (preferred) or inline `device`.
-3. Auth token format: `sk_xxx` (from Web Console → Device Info → Connection Settings → HTTP/HTTPS Settings).
-4. To detect by label name: call `get_detection_models_info`, map name → label index, use index in `label_filter`.
-5. Poll `get_detection_events` every 1–10s; pass `start_unix_ms` for incremental reads.
-6. Prefer event metadata first; fetch images only when needed.
-7. CLI output: success = JSON on stdout (mutating commands may produce no stdout, check exit code `0`); failure = actionable stderr. On error, surface stderr and provide one concrete fix.
-
-## Execution checklist
-
-Copy and track for multi-step tasks:
-
-```text
-reCamera Task Progress
-- [ ] Resolve device (device_name or inline device)
-- [ ] Validate JSON arguments
-- [ ] Run CLI command
-- [ ] If polling, checkpoint start_unix_ms
-- [ ] Handle errors with one fix suggestion
-```
-
-## CLI quickstart
-
-Run from `{baseDir}`:
+**Check if already installed:**
 
 ```bash
-python3 scripts/device_manager.py add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxxxxxx"}'
-python3 scripts/device_manager.py list_devices
-python3 scripts/detection_manager.py get_detection_models_info '{"device_name":"cam1"}'
-python3 scripts/detection_manager.py set_detection_model '{"device_name":"cam1","model_id":0}'
-python3 scripts/detection_manager.py get_detection_events '{"device_name":"cam1"}'
-python3 scripts/detection_manager.py clear_detection_events '{"device_name":"cam1"}'
-python3 scripts/detection_manager.py fetch_detection_event_image '{"device_name":"cam1","snapshot_path":"/mnt/.../event.jpg","local_save_path":"./event.jpg"}'
-python3 scripts/capture_manager.py capture_image '{"device_name":"cam1","local_save_path":"./capture.jpg"}'
+python3 scripts/setup-mcp.py --check
 ```
 
-## Python pattern (long-running automation)
+Exits 0 and prints the binary path if installed; exits 1 otherwise.
 
-```python
-from datetime import datetime, timezone
-import sys
-sys.path.append("./scripts")
+**Install (non-interactive — recommended for agents):**
 
-from device_manager import get_device
-from detection_manager import get_detection_events
-
-device = get_device("cam1")
-events = get_detection_events(device, start_unix_ms=int(datetime.now(timezone.utc).timestamp() * 1000))
+```bash
+curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-mcp.py | python3 - --yes
 ```
 
-Use a loop with checkpointed `start_unix_ms` for incremental polling.
+The `--yes` flag auto-configures all detected MCP clients without prompting. Installs to `~/.recamera/bin/`. The last output line is `BINARY_PATH=<path>` for easy parsing.
+
+Note you can also manually configure the MCP server with the printed binary path if it's already installed but not configured for you.
+
+## Tool overview
+
+All tools are exposed through the `recamera` MCP server. Register a device first with `recamera:add_device` before using device-specific tools.
+
+- **Device**: `detect_local_device`, `add_device`, `update_device`, `remove_device`, `get_device`, `list_devices`
+- **Detection**: `get_detection_models_info`, `get_detection_model`, `set_detection_model`, `get_detection_schedule`, `set_detection_schedule`, `get_detection_rules`, `set_detection_rules`, `get_detection_events`, `clear_detection_events`
+- **Capture**: `get_capture_status`, `start_capture`, `stop_capture`, `capture_image`
+- **File**: `fetch_file`, `delete_file`
+- **GPIO**: `list_gpios`, `get_gpio_info`, `set_gpio_value`, `get_gpio_value`
+
+## Rules
+
+1. Auth token format: `sk_...` (from reCamera Web Console → Device Info → Connection Settings).
+2. Always pass `device_name` — the name given when the device was registered with `add_device`.
+3. Prefer metadata before images: use `get_detection_events` first; call `fetch_file` with `snapshot_path` only when the image is needed.
+4. `fetch_file` returns images inline, text as text, and skips video/large files (>5 MB). Use the file path on device for large data.
+5. Tool errors return `is_error: true` with an actionable message. Surface the message and suggest one concrete fix.
 
 ## Workflows
 
 ### Onboard a device
 
-1. `add_device` with host + token.
-2. `list_devices` to verify.
+1. `add_device` with `name`, `host`, `token` (connectivity is tested automatically).
+2. `list_devices` to verify registration.
 
-### Configure object detection by name
+### Configure object detection by label name
 
-1. `get_detection_models_info` → map object name to label index.
-2. `set_detection_model`.
-3. `set_detection_rules` with `label_filter` containing the index.
-4. `clear_detection_events` to start fresh.
+1. `get_detection_models_info` → find the model containing the target label.
+2. `set_detection_model` by `model_id` or `model_name`.
+3. `set_detection_rules` with `label_filter` containing label names.
+4. `clear_detection_events` to reset the event log.
 
-### Monitor events
+### Monitor detection events
 
-1. Poll `get_detection_events` with `start_unix_ms` every 1–10s.
-2. Track last timestamp for next poll.
-3. Fetch images only when needed via `fetch_detection_event_image`.
+1. Call `get_detection_events` with `start_unix_ms` set to now.
+2. Track the last `timestamp_unix_ms` returned; pass it as `start_unix_ms` on next call.
+3. Fetch snapshots only when needed: `fetch_file` with `snapshot_path` from the event.
 
-### On-demand snapshot
+### On-demand image capture
 
-- **CLI**: `capture_image` with `local_save_path` → returns `{capture, saved_path, bytes}`.
-- **Python**: `capture_image` → persist returned `content` bytes.
-- **Alternative**: `fetch_detection_event_image` with `local_save_path`.
+`capture_image` captures a JPG and returns both metadata and the image inline.
+
+### GPIO control
+
+1. `list_gpios` to discover pins and capabilities.
+2. `set_gpio_value` to write (auto-configures as output).
+3. `get_gpio_value` to read (auto-configures as input with debounce).
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| 401/403 auth error | Re-copy token from Web Console |
+| 401/403 auth error | Re-copy token from reCamera Web Console |
 | Timeout / connection refused | Verify host, network path, device power |
-| Schedule rejected | Use `Day HH:MM:SS` format |
-| Empty rules or events | Enable rule/storage prerequisites; check region filter; poll more frequently |
-| Image fetch failed | Use fresh `snapshot_path`; data may rotate out |
-| Import errors in Python mode | Run from `{baseDir}`; append `./scripts` to `sys.path` |
+| `'device_name' must not be empty` | Pass the device name from `add_device`; run `list_devices` to check |
+| Empty detection rules or events | Check that a model is active (`get_detection_model`) and storage is enabled |
+| Image fetch failed | Use a fresh `snapshot_path` from `get_detection_events`; old data may rotate out |
+| Schedule rejected | Use `Day HH:MM:SS` format (e.g. `Mon 08:00:00`) |
+| GPIO value rejected | Value must be 0 or 1; verify `pin_id` via `list_gpios` |
