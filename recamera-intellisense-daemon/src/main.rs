@@ -5,7 +5,6 @@ mod ws_client;
 
 use clap::Parser;
 use event_store::{EventStore, EventStoreConfig};
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::signal;
 use tokio::sync::watch;
@@ -15,36 +14,40 @@ use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "recamera-intellisense-daemon",
+    name = "rcisd",
     about = "reCamera Intellisense daemon for rule/file events"
 )]
 struct Args {
-    /// WebSocket URL to connect to for events
-    #[arg(long, default_value = "ws://127.0.0.1:16383/api/v1/record/events")]
+    /// WebSocket URL to connect to for events (used when ws-unix-socket is not set)
+    #[arg(long, default_value = "")]
     ws_url: String,
 
-    /// HTTP listen address (host:port)
-    #[arg(long, default_value = "127.0.0.1:16384")]
-    http_addr: String,
+    /// Unix domain socket path for WebSocket connection (overrides ws-url)
+    #[arg(long, default_value = "")]
+    ws_unix_socket: String,
+
+    /// URI path used for the WebSocket handshake over Unix socket
+    #[arg(long, default_value = "")]
+    ws_unix_path: String,
 
     /// Unix domain socket path (empty to disable)
     #[arg(long, default_value = "")]
     unix_socket: String,
 
     /// Unix domain socket permission (octal)
-    #[arg(long, default_value_t = 0o777)]
+    #[arg(long, default_value_t = 0o666)]
     unix_permission: u32,
 
     /// Maximum pending rule events queue size
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 500)]
     rule_queue_size: usize,
 
     /// Maximum merged results queue size
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 500)]
     merged_queue_size: usize,
 
     /// Merged results time window in seconds
-    #[arg(long, default_value_t = 180)]
+    #[arg(long, default_value_t = 100)]
     merged_window_secs: u64,
 
     /// Timeout (ms) for unmatched rule events before promoting
@@ -80,7 +83,6 @@ async fn main() {
     info!("reCamera Intellisense daemon starting");
     info!(
         ws_url = %args.ws_url,
-        http_addr = %args.http_addr,
         allowed_path_prefix = %allowed_file_prefix.display()
     );
 
@@ -96,28 +98,28 @@ async fn main() {
     // Shutdown signal channel
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    // Spawn WebSocket client
-    let ws_store = store.clone();
-    let ws_shutdown = shutdown_rx.clone();
-    let ws_url = args.ws_url.clone();
-    let ws_handle = tokio::spawn(async move {
-        ws_client::run_ws_client(ws_url, ws_store, ws_shutdown).await;
-    });
-
-    // Spawn TCP HTTP server
-    let tcp_store = store.clone();
-    let tcp_shutdown = shutdown_rx.clone();
-    let http_addr: SocketAddr = args.http_addr.parse().unwrap_or_else(|e| {
-        warn!(
-            "Invalid HTTP address '{}': {e}, using default",
-            args.http_addr
-        );
-        "127.0.0.1:16384".parse().unwrap()
-    });
-    let tcp_allowed_prefix = allowed_file_prefix.clone();
-    let tcp_handle = tokio::spawn(async move {
-        http_server::run_tcp_server(http_addr, tcp_store, tcp_shutdown, tcp_allowed_prefix).await;
-    });
+    // Spawn WebSocket client (if configured)
+    let ws_handle = if !args.ws_unix_socket.is_empty() {
+        let ws_store = store.clone();
+        let ws_shutdown = shutdown_rx.clone();
+        let ws_target = ws_client::WsTarget::Unix {
+            socket_path: args.ws_unix_socket.clone(),
+            uri_path: args.ws_unix_path.clone(),
+        };
+        Some(tokio::spawn(async move {
+            ws_client::run_ws_client(ws_target, ws_store, ws_shutdown).await;
+        }))
+    } else if !args.ws_url.is_empty() {
+        let ws_store = store.clone();
+        let ws_shutdown = shutdown_rx.clone();
+        let ws_target = ws_client::WsTarget::Tcp(args.ws_url.clone());
+        Some(tokio::spawn(async move {
+            ws_client::run_ws_client(ws_target, ws_store, ws_shutdown).await;
+        }))
+    } else {
+        warn!("No WebSocket source configured (--ws-url or --ws-unix-socket); events will not be received");
+        None
+    };
 
     // Optionally spawn Unix socket HTTP server
     let unix_handle = if !args.unix_socket.is_empty() {
@@ -137,6 +139,7 @@ async fn main() {
             .await;
         }))
     } else {
+        warn!("No HTTP listener configured (--unix-socket); API will not be available");
         None
     };
 
@@ -185,8 +188,9 @@ async fn main() {
     let _ = shutdown_tx.send(true);
 
     // Wait for tasks to finish
-    let _ = ws_handle.await;
-    let _ = tcp_handle.await;
+    if let Some(h) = ws_handle {
+        let _ = h.await;
+    }
     if let Some(h) = unix_handle {
         let _ = h.await;
     }

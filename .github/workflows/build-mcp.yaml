@@ -33,7 +33,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: recamera-intellisence-mcp
+        working-directory: recamera-intellisense-mcp
 
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +45,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: recamera-intellisence-mcp
+          workspaces: recamera-intellisense-mcp
           key: ${{ matrix.target }}
 
       - name: Install cross
@@ -80,11 +80,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: recamera-intellisence-mcp/${{ matrix.artifact }}.tar.gz
+          path: recamera-intellisense-mcp/${{ matrix.artifact }}.tar.gz
 
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: recamera-intellisence-mcp/${{ matrix.artifact }}.zip
+          path: recamera-intellisense-mcp/${{ matrix.artifact }}.zip
