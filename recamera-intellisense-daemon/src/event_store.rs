@@ -83,7 +83,8 @@ impl EventStore {
 
         // Check if there's an orphan file event waiting for this rule
         if let Some(orphan) = self.orphan_files.remove(&uid) {
-            self.orphan_files_order.retain(|&orphan_uid| orphan_uid != uid);
+            self.orphan_files_order
+                .retain(|&orphan_uid| orphan_uid != uid);
             debug!(uid, "Merging rule event with cached file event");
             let merged = MergedEvent::from_rule_and_file(&rule, orphan.file);
             self.insert_merged(merged);

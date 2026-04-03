@@ -79,12 +79,13 @@ async fn handle_request(
     let query = parse_query(req.uri());
 
     let response = match (method, path.as_str()) {
-        (Method::GET, "/api/v1/recamera-generate-204") | (Method::HEAD, "/api/v1/recamera-generate-204") => {
-            empty_response(StatusCode::NO_CONTENT)
+        (Method::GET, "/api/v1/recamera-generate-204")
+        | (Method::HEAD, "/api/v1/recamera-generate-204") => empty_response(StatusCode::NO_CONTENT),
+        (Method::GET, "/api/v1/intellisense/events") => handle_get_events(&query, &store).await,
+        (Method::GET, "/api/v1/intellisense/events/size") => {
+            handle_get_events_size(&query, &store).await
         }
-        (Method::GET, "/api/v1/events") => handle_get_events(&query, &store).await,
-        (Method::GET, "/api/v1/events/size") => handle_get_events_size(&query, &store).await,
-        (Method::POST, "/api/v1/events/clear") => handle_clear_events(&store).await,
+        (Method::POST, "/api/v1/intellisense/events/clear") => handle_clear_events(&store).await,
         (Method::GET, "/api/v1/file") => {
             handle_get_file(&req, &query, allowed_file_prefix.as_path()).await
         }
@@ -141,7 +142,9 @@ async fn handle_get_file(
 ) -> Response<BoxBody> {
     let path_str = match query.get("path") {
         Some(p) => p,
-        None => return empty_error_response(StatusCode::BAD_REQUEST, "Missing 'path' query parameter"),
+        None => {
+            return empty_error_response(StatusCode::BAD_REQUEST, "Missing 'path' query parameter")
+        }
     };
 
     let path = Path::new(path_str);
@@ -153,7 +156,9 @@ async fn handle_get_file(
 
     let canonical_requested = match fs::canonicalize(path).await {
         Ok(p) => p,
-        Err(e) => return empty_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}")),
+        Err(e) => {
+            return empty_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}"))
+        }
     };
 
     let canonical_prefix = fs::canonicalize(allowed_file_prefix)
@@ -167,7 +172,9 @@ async fn handle_get_file(
     // Check file metadata
     let metadata = match fs::metadata(&canonical_requested).await {
         Ok(m) => m,
-        Err(e) => return empty_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}")),
+        Err(e) => {
+            return empty_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}"))
+        }
     };
 
     if !metadata.is_file() {
@@ -256,7 +263,9 @@ async fn handle_delete_file(
 ) -> Response<BoxBody> {
     let path_str = match query.get("path") {
         Some(p) => p,
-        None => return empty_error_response(StatusCode::BAD_REQUEST, "Missing 'path' query parameter"),
+        None => {
+            return empty_error_response(StatusCode::BAD_REQUEST, "Missing 'path' query parameter")
+        }
     };
 
     let path = Path::new(path_str);
@@ -267,7 +276,9 @@ async fn handle_delete_file(
 
     let canonical_requested = match fs::canonicalize(path).await {
         Ok(p) => p,
-        Err(e) => return empty_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}")),
+        Err(e) => {
+            return empty_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}"))
+        }
     };
 
     let canonical_prefix = fs::canonicalize(allowed_file_prefix)
@@ -280,7 +291,9 @@ async fn handle_delete_file(
 
     let metadata = match fs::metadata(&canonical_requested).await {
         Ok(m) => m,
-        Err(e) => return empty_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}")),
+        Err(e) => {
+            return empty_error_response(StatusCode::NOT_FOUND, &format!("File not found: {e}"))
+        }
     };
 
     if !metadata.is_file() {

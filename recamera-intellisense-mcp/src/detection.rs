@@ -430,7 +430,7 @@ pub async fn get_detection_events(
         Some(params.as_slice())
     };
     let raw = client
-        .get_json(device, "/api/v1/events", params_opt)
+        .get_json(device, "/api/v1/intellisense/events", params_opt)
         .await?;
     let items = raw
         .as_array()
@@ -466,7 +466,7 @@ pub async fn get_detection_events(
 
 pub async fn clear_detection_events(client: &ApiClient, device: &DeviceRecord) -> Result<()> {
     let result = client
-        .post_json(device, "/api/v1/events/clear", None, None)
+        .post_json(device, "/api/v1/intellisense/events/clear", None, None)
         .await?;
     let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("");
     if !status.eq_ignore_ascii_case("ok") {

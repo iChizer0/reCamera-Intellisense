@@ -14,7 +14,10 @@ pub enum WsTarget {
     /// Connect via TCP using a ws:// or wss:// URL.
     Tcp(String),
     /// Connect via Unix domain socket with the given socket path and URI path.
-    Unix { socket_path: String, uri_path: String },
+    Unix {
+        socket_path: String,
+        uri_path: String,
+    },
 }
 
 /// Run the WebSocket client loop with automatic reconnection.
