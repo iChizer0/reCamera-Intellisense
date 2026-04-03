@@ -181,7 +181,6 @@ pub async fn delete_file(
     remote_path: &str,
 ) -> Result<()> {
     client
-        .delete_json(device, "/api/v1/file", Some(&[("path", remote_path)]))
-        .await?;
-    Ok(())
+        .delete(device, "/api/v1/file", Some(&[("path", remote_path)]))
+        .await
 }

@@ -82,18 +82,21 @@ impl ReCameraServer {
     // ─── Device Management Tools ─────────────────────────────────────────
 
     #[tool(
-        description = "Detect a reCamera device on the local network (localhost). Returns the host if found."
+        description = "Detect a reCamera Intellisense daemon running locally by checking its Unix socket. Returns the socket path if found."
     )]
     async fn detect_local_device(
         &self,
         Parameters(params): Parameters<DetectLocalDeviceParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let host = params.host.as_deref().unwrap_or("127.0.0.1");
-        let found = try_tool!(self.client.detect_local(host).await);
+        let socket_path = params
+            .socket_path
+            .as_deref()
+            .unwrap_or("/dev/shm/rcisd.sock");
+        let found = ApiClient::detect_local(socket_path).await;
         if found {
-            Ok(text_result(host))
+            Ok(text_result(socket_path))
         } else {
-            Ok(text_result("No device detected"))
+            Ok(text_result("No daemon detected"))
         }
     }
 

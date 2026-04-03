@@ -166,8 +166,8 @@ pub struct PinDescriptor {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DetectLocalDeviceParams {
-    /// Host address to check (default: 127.0.0.1)
-    pub host: Option<String>,
+    /// Unix socket path of the daemon to check (default: /dev/shm/rcisd.sock)
+    pub socket_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

@@ -124,34 +124,26 @@ impl ApiClient {
         let resp = req.send().await?;
         if !resp.status().is_success() {
             let status = resp.status();
+            let err_msg = resp
+                .headers()
+                .get("x-error")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
             let body = resp.text().await.unwrap_or_default();
-            bail!("Failed to fetch file: HTTP {status}: {body}");
+            let detail = err_msg
+                .filter(|s| !s.is_empty())
+                .unwrap_or(body);
+            bail!("Failed to fetch file: HTTP {status}: {detail}");
         }
-        let content_type = resp
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_lowercase();
-        let bytes = resp.bytes().await?.to_vec();
-        if content_type.contains("application/json") {
-            if let Ok(error_data) = serde_json::from_slice::<Value>(&bytes) {
-                let msg = error_data
-                    .get("error")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Unknown error");
-                bail!("API error: {msg}");
-            }
-        }
-        Ok(bytes)
+        Ok(resp.bytes().await?.to_vec())
     }
 
-    pub async fn delete_json(
+    pub async fn delete(
         &self,
         device: &DeviceRecord,
         endpoint: &str,
         params: Option<&[(&str, &str)]>,
-    ) -> Result<Value> {
+    ) -> Result<()> {
         let url = Self::api_url(device, endpoint);
         let client = self.client_for(device);
         let mut req = client.delete(&url).header("Authorization", &device.token);
@@ -161,10 +153,18 @@ impl ApiClient {
         let resp = req.send().await?;
         if !resp.status().is_success() {
             let status = resp.status();
+            let err_msg = resp
+                .headers()
+                .get("x-error")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
             let body = resp.text().await.unwrap_or_default();
-            bail!("HTTP {status}: {body}");
+            let detail = err_msg
+                .filter(|s| !s.is_empty())
+                .unwrap_or(body);
+            bail!("HTTP {status}: {detail}");
         }
-        Ok(resp.json().await?)
+        Ok(())
     }
 
     pub async fn test_connection(
@@ -176,8 +176,8 @@ impl ApiClient {
         port: Option<u16>,
     ) -> Result<()> {
         let url = match port {
-            Some(p) => format!("{protocol}://{host}:{p}/api/v1/generate-204"),
-            None => format!("{protocol}://{host}/api/v1/generate-204"),
+            Some(p) => format!("{protocol}://{host}:{p}/api/v1/recamera-generate-204"),
+            None => format!("{protocol}://{host}/api/v1/recamera-generate-204"),
         };
         let client = if protocol == "https" && allow_unsecured {
             &self.insecure_client
@@ -199,17 +199,9 @@ impl ApiClient {
         Ok(())
     }
 
-    pub async fn detect_local(&self, host: &str) -> Result<bool> {
-        let url = format!("http://{host}:16384/api/v1/generate-204");
-        match self
-            .secure_client
-            .get(&url)
-            .timeout(Duration::from_secs(3))
-            .send()
+    pub async fn detect_local(socket_path: &str) -> bool {
+        tokio::net::UnixStream::connect(socket_path)
             .await
-        {
-            Ok(resp) => Ok(resp.status().is_success()),
-            Err(_) => Ok(false),
-        }
+            .is_ok()
     }
 }

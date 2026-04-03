@@ -79,7 +79,7 @@ async fn handle_request(
     let query = parse_query(req.uri());
 
     let response = match (method, path.as_str()) {
-        (Method::GET, "/api/v1/generate-204") | (Method::HEAD, "/api/v1/generate-204") => {
+        (Method::GET, "/api/v1/recamera-generate-204") | (Method::HEAD, "/api/v1/recamera-generate-204") => {
             empty_response(StatusCode::NO_CONTENT)
         }
         (Method::GET, "/api/v1/events") => handle_get_events(&query, &store).await,
