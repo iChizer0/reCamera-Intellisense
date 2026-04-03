@@ -30,7 +30,7 @@ struct Args {
     #[arg(long, default_value = "")]
     ws_unix_path: String,
 
-    /// Unix domain socket path (empty to disable)
+    /// Unix domain socket path
     #[arg(long, default_value = "")]
     unix_socket: String,
 
