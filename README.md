@@ -24,10 +24,10 @@ If you use the [ClawHub](https://clawhub.ai) agent framework, install the skill 
 npx clawhub@latest install recamera-intellisense
 ```
 
-### Option B — Shell script (macOS or Linux)
+### Option B — Python setup script (macOS or Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/install-skill.sh | bash
+curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/install-skill.py | python3
 ```
 
 The installer will prompt you to choose an installation directory (current workspace, a detected Claw directory, or a custom path).

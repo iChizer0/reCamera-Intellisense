@@ -118,7 +118,7 @@ def detect_platform() -> tuple[str, str]:
     asset_stem = PLATFORM_MAP.get(key)
     if asset_stem is None:
         error(f"Unsupported platform: {system} {machine}")
-        print(f"  Supported platforms:")
+        print("  Supported platforms:")
         for (s, m), name in PLATFORM_MAP.items():
             print(f"    {s} {m}  →  {name}")
         sys.exit(1)
@@ -477,7 +477,42 @@ class Windsurf(Agent):
         )
 
 
-ALL_AGENTS: list[type[Agent]] = [VSCode, ClaudeDesktop, ClaudeCode, Cursor, Windsurf]
+class Nanobot(Agent):
+    name = "Nanobot"
+
+    def __init__(self) -> None:
+        self.config_path = Path.home() / ".nanobot" / "config.json"
+
+    def detect(self) -> bool:
+        return shutil.which("nanobot") is not None or self.config_exists()
+
+    def is_already_configured(self) -> bool:
+        cfg = self.read_config()
+        return "recamera" in cfg.get("tools", {}).get("mcpServers", {})
+
+    def configure(self, binary_path: Path) -> None:
+        cfg = self.read_config()
+        cfg.setdefault("tools", {}).setdefault("mcpServers", {})["recamera"] = {
+            "command": str(binary_path),
+            "args": [],
+        }
+        self.write_config(cfg)
+
+    def manual_instructions(self, binary_path: Path) -> str:
+        return (
+            f"  Add to ~/.nanobot/config.json:\n"
+            f'  {{"tools": {{"mcpServers": {{"recamera": {{"command": "{binary_path}", "args": []}}}}}}}}'
+        )
+
+
+ALL_AGENTS: list[type[Agent]] = [
+    VSCode,
+    ClaudeDesktop,
+    ClaudeCode,
+    Cursor,
+    Windsurf,
+    Nanobot,
+]
 
 
 def detect_agents() -> list[Agent]:
@@ -510,7 +545,7 @@ def configure_agents(agents: list[Agent], binary_path: Path) -> None:
             except OSError as e:
                 warn(f"  {agent.name}: failed to write config — {e}")
         else:
-            print(f"    Skipped. Manual setup:")
+            print("    Skipped. Manual setup:")
             print(agent.manual_instructions(binary_path))
 
 
