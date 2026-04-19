@@ -6,7 +6,13 @@ use crate::api_client::ApiClient;
 use crate::types::{DeviceRecord, DirEntry, RelayStatus, StorageSlot};
 
 // MARK: Relay lifecycle (delegates to storage control API)
+//
+// These thin wrappers are retained as internal helpers even though the relay tools
+// are no longer exposed to MCP clients — `records` opens/refreshes a relay lazily
+// via `ensure_relay_uuid` and never calls these directly. Kept for future use and
+// for any in-process caller that needs explicit lifecycle control.
 
+#[allow(dead_code)]
 pub async fn open(
     client: &ApiClient,
     device: &DeviceRecord,
@@ -15,6 +21,7 @@ pub async fn open(
     api_storage::control_relay_open(client, device, dev_path).await
 }
 
+#[allow(dead_code)]
 pub async fn status(
     client: &ApiClient,
     device: &DeviceRecord,
@@ -23,6 +30,7 @@ pub async fn status(
     api_storage::control_relay_status(client, device, dev_path).await
 }
 
+#[allow(dead_code)]
 pub async fn close(client: &ApiClient, device: &DeviceRecord, dev_path: &str) -> Result<()> {
     api_storage::control_relay_close(client, device, dev_path).await
 }

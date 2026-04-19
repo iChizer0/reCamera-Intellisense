@@ -121,6 +121,7 @@ pub async fn control_relay_status(
     extract_relay_status(&resp)
 }
 
+#[allow(dead_code)]
 pub async fn control_relay_close(
     client: &ApiClient,
     device: &DeviceRecord,

@@ -70,7 +70,6 @@ Register a device first (`add_device`), then pass `device_name` to everything el
 - **Rule pipeline** (low level) — `get_rule_system_info`, `get_record_config`, `set_record_config`, `get_schedule_rule`, `set_schedule_rule`, `get_record_trigger`, `set_record_trigger`, `activate_http_trigger`
 - **Storage** — `get_storage_status`, `set_storage_slot`, `configure_storage_quota`, `storage_task_submit`, `storage_task_status`, `storage_task_cancel`
 - **Records** (browse clips) — `list_records`, `fetch_record`
-- **Relay** (advanced — records open one implicitly) — `open_relay`, `get_relay_status`, `close_relay`
 - **Capture** — `get_capture_status`, `start_capture`, `stop_capture`, `capture_image`
 - **File** (daemon, absolute paths) — `fetch_file`, `delete_file`, `get_intellisense_events`, `clear_intellisense_events`
 - **GPIO** — `list_gpios`, `get_gpio_info`, `set_gpio_value`, `get_gpio_value`

@@ -451,14 +451,7 @@ pub struct StorageTaskQueryParams {
     pub dev_path: String,
 }
 
-// MARK: MCP params - relay / records
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct RelayParams {
-    pub device_name: String,
-    /// Target slot device path; defaults to the enabled slot.
-    pub dev_path: Option<String>,
-}
+// MARK: MCP params - records
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListRecordsParams {

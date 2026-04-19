@@ -8,8 +8,8 @@ use rmcp::{
 };
 
 use crate::api::{
-    capture as api_capture, daemon as api_daemon, gpio as api_gpio, relay as api_relay,
-    rule as api_rule, storage as api_storage,
+    capture as api_capture, daemon as api_daemon, gpio as api_gpio, rule as api_rule,
+    storage as api_storage,
 };
 use crate::api_client::ApiClient;
 use crate::detection;
@@ -620,49 +620,6 @@ impl ReCameraServer {
             .await
         );
         Ok(try_tool!(json_result(&resp)))
-    }
-
-    // MARK: Relay lifecycle
-
-    #[tool(
-        description = "Open a record relay for the given (or enabled) slot. Returns relay UUID and timeout."
-    )]
-    async fn open_relay(
-        &self,
-        Parameters(params): Parameters<RelayParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let device = try_tool!(self.resolve(&params.device_name).await);
-        let slot = try_tool!(
-            api_relay::resolve_slot(&self.client, &device, params.dev_path.as_deref()).await
-        );
-        let status = try_tool!(api_relay::open(&self.client, &device, &slot.dev_path).await);
-        Ok(try_tool!(json_result(&status)))
-    }
-
-    #[tool(description = "Get the current relay status for the given (or enabled) slot.")]
-    async fn get_relay_status(
-        &self,
-        Parameters(params): Parameters<RelayParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let device = try_tool!(self.resolve(&params.device_name).await);
-        let slot = try_tool!(
-            api_relay::resolve_slot(&self.client, &device, params.dev_path.as_deref()).await
-        );
-        let status = try_tool!(api_relay::status(&self.client, &device, &slot.dev_path).await);
-        Ok(try_tool!(json_result(&status)))
-    }
-
-    #[tool(description = "Close the relay for the given (or enabled) slot.")]
-    async fn close_relay(
-        &self,
-        Parameters(params): Parameters<RelayParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let device = try_tool!(self.resolve(&params.device_name).await);
-        let slot = try_tool!(
-            api_relay::resolve_slot(&self.client, &device, params.dev_path.as_deref()).await
-        );
-        try_tool!(api_relay::close(&self.client, &device, &slot.dev_path).await);
-        Ok(text_result("Relay closed."))
     }
 
     // MARK: Records (relay-backed, recommended for browsing recordings)
