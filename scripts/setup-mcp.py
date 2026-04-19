@@ -6,7 +6,7 @@ Auto-detects platform, downloads the latest release binary from GitHub,
 installs it to ~/.recamera/bin, and optionally configures detected MCP clients.
 
 Usage:
-    python3 setup-mcp.py            # interactive
+    python3 setup-mcp.py             # interactive
     python3 setup-mcp.py --yes       # non-interactive (auto-configure all detected clients)
     python3 setup-mcp.py --check     # print binary path if installed, exit 0/1
     curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-mcp.py | python3

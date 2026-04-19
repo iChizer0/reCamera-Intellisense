@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recamera-intellisense"
+version = "2.0.0"
+description = "Stdlib-only Python SDK for reCamera V2 (device control, detection, capture, storage, GPIO)."
+requires-python = ">=3.9"
+authors = [{ name = "reCamera Intellisense" }]
+license = { text = "MIT" }
+keywords = ["recamera", "seeed", "computer-vision", "iot"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.scripts]
+recamera = "recamera_intellisense._cli:main"
+
+[tool.setuptools]
+packages = ["recamera_intellisense"]
