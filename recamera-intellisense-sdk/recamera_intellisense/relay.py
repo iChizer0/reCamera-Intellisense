@@ -1,4 +1,10 @@
-"""Storage relay lifecycle + per-process UUID cache (serves record files via nginx autoindex)."""
+"""Storage relay lifecycle + per-process UUID cache (serves record files via nginx autoindex).
+
+This module is **internal**: the relay is an implementation detail of ``records`` and
+``files`` (where it is opened/refreshed lazily). It is intentionally not exposed via the
+MCP tool surface or the SDK's public CLI command set. Import from Python is still
+supported for advanced users who need direct relay control.
+"""
 
 from __future__ import annotations
 
@@ -131,13 +137,5 @@ def build_relay_url(device_name: str, uuid: str, rel_path: str = "") -> str:
     return _http.base_url(dev) + endpoint
 
 
-COMMANDS = {
-    "open_relay": open_relay,
-    "get_relay_status": get_relay_status,
-    "close_relay": close_relay,
-}
-COMMAND_SCHEMAS = {
-    "open_relay": {"required": {"device_name"}, "optional": {"dev_path"}},
-    "get_relay_status": {"required": {"device_name"}, "optional": {"dev_path"}},
-    "close_relay": {"required": {"device_name"}, "optional": {"dev_path"}},
-}
+COMMANDS: Dict[str, Any] = {}
+COMMAND_SCHEMAS: Dict[str, Any] = {}

@@ -130,9 +130,7 @@ impl ApiClient {
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
             let body = resp.text().await.unwrap_or_default();
-            let detail = err_msg
-                .filter(|s| !s.is_empty())
-                .unwrap_or(body);
+            let detail = err_msg.filter(|s| !s.is_empty()).unwrap_or(body);
             bail!("Failed to fetch file: HTTP {status}: {detail}");
         }
         Ok(resp.bytes().await?.to_vec())
@@ -159,9 +157,7 @@ impl ApiClient {
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
             let body = resp.text().await.unwrap_or_default();
-            let detail = err_msg
-                .filter(|s| !s.is_empty())
-                .unwrap_or(body);
+            let detail = err_msg.filter(|s| !s.is_empty()).unwrap_or(body);
             bail!("HTTP {status}: {detail}");
         }
         Ok(())
@@ -201,9 +197,7 @@ impl ApiClient {
 
     #[cfg(unix)]
     pub async fn detect_local(socket_path: &str) -> bool {
-        tokio::net::UnixStream::connect(socket_path)
-            .await
-            .is_ok()
+        tokio::net::UnixStream::connect(socket_path).await.is_ok()
     }
 
     #[cfg(not(unix))]

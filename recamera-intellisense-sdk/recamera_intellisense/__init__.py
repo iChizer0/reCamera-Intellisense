@@ -29,7 +29,7 @@ from .storage import (
     storage_task_status,
     storage_task_submit,
 )
-from .relay import close_relay, get_relay_status, open_relay
+from .relay import close_relay, get_relay_status, open_relay  # noqa: F401 (internal)
 from .records import fetch_record, list_records
 from .capture import capture_image, get_capture_status, start_capture, stop_capture
 from .gpio import get_gpio_info, get_gpio_value, list_gpios, set_gpio_value
@@ -71,10 +71,7 @@ __all__ = [
     "storage_task_submit",
     "storage_task_status",
     "storage_task_cancel",
-    # relay / records
-    "open_relay",
-    "get_relay_status",
-    "close_relay",
+    # records
     "list_records",
     "fetch_record",
     # capture
