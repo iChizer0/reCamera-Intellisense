@@ -129,11 +129,13 @@ class Ui:
 
     @classmethod
     def rule(cls, title: str = "") -> None:
-        bar = "─" * 60
+        bar_length = max(60, len(title) + 4)
+        padding = " " * ((bar_length - len(title) - 2) // 2)
+        bar = "─" * bar_length
         if title:
             print()
             print(cls.bold(bar))
-            print(cls.bold(f"  {title}"))
+            print(cls.bold(f"{padding}{title}"))
             print(cls.bold(bar))
         else:
             print(cls.dim(bar))
@@ -333,7 +335,12 @@ def extract_and_install(
         if target.archive_ext == ".tar.gz":
             with tarfile.open(archive, "r:gz") as tar:
                 member = _safe_tar_member(tar, target.binary_filename)
-                tar.extract(member, path=tmp_path)
+                # filter="data" silences Py3.14 DeprecationWarning and hardens
+                # extraction (rejects absolute paths, traversal, device nodes).
+                try:
+                    tar.extract(member, path=tmp_path, filter="data")
+                except TypeError:  # Python < 3.12
+                    tar.extract(member, path=tmp_path)
                 extracted = tmp_path / member.name
         else:
             with zipfile.ZipFile(archive, "r") as zf:
@@ -725,12 +732,14 @@ def do_install(args: argparse.Namespace) -> int:
     Ui.info(f"Installed to {Ui.cyan(str(binary_path))}")
 
     agents = filter_agents(args.client)
+    failed: list[Agent] = []
     if not agents and not args.client:
         Ui.warn("No supported MCP clients detected on this system.")
     else:
-        _configure_agents(agents, binary_path)
+        failed = _configure_agents(agents, binary_path)
 
-    _print_summary(binary_path, agents)
+    configured = [a for a in agents if a not in failed]
+    _print_summary(binary_path, configured, failed)
 
     print(f"BINARY_PATH={binary_path}")
     return 0
@@ -751,14 +760,18 @@ def _download_and_extract(
         return extract_and_install(archive, target, install_dir)
 
 
-def _configure_agents(agents: Iterable[Agent], binary_path: Path) -> None:
+def _configure_agents(agents: Iterable[Agent], binary_path: Path) -> list[Agent]:
+    """Run interactive configuration. Returns the subset whose auto-configure
+    failed (broken config, write error, or raised SetupError) — these are
+    the only agents we still owe a manual-setup snippet at the end."""
     agents = list(agents)
     if not agents:
-        return
+        return []
 
     print()
     Ui.info(f"MCP clients: {', '.join(Ui.bold(a.name) for a in agents)}")
 
+    failed: list[Agent] = []
     for agent in agents:
         cfg = agent.read_config()
         if cfg is None:
@@ -767,6 +780,7 @@ def _configure_agents(agents: Iterable[Agent], binary_path: Path) -> None:
                 f"({agent.config_path}). Skipping — refusing to overwrite."
             )
             Ui.hint("Fix the file by hand then re-run `configure`.")
+            failed.append(agent)
             continue
 
         if agent.is_registered(cfg):
@@ -775,8 +789,7 @@ def _configure_agents(agents: Iterable[Agent], binary_path: Path) -> None:
 
         prompt = f"Configure {Ui.bold(agent.name)} ({Ui.dim(str(agent.config_path))})?"
         if not Ui.ask_yes_no(prompt, default=True):
-            print("   Skipped. Manual setup:")
-            print(f"   {Ui.dim(agent.manual_instructions(binary_path))}")
+            Ui.info(f"{agent.name}: skipped")
             continue
 
         try:
@@ -785,29 +798,36 @@ def _configure_agents(agents: Iterable[Agent], binary_path: Path) -> None:
             Ui.warn(f"{agent.name}: {e}")
             if e.hint:
                 Ui.hint(e.hint)
+            failed.append(agent)
             continue
         except OSError as e:
             Ui.warn(f"{agent.name}: failed to write config — {e}")
+            failed.append(agent)
             continue
 
         Ui.info(f"{agent.name}: configured")
         if isinstance(agent, ClaudeDesktopAgent):
             print(f"   {Ui.dim('Restart Claude Desktop to pick up changes.')}")
 
+    return failed
 
-def _print_summary(binary_path: Path, configured: Iterable[Agent]) -> None:
+
+def _print_summary(
+    binary_path: Path,
+    configured: Iterable[Agent],
+    failed: Iterable[Agent] = (),
+) -> None:
     configured = list(configured)
-    configured_keys = {a.key for a in configured}
+    failed = list(failed)
     Ui.rule("Installation complete")
     print(f"  Binary:  {Ui.cyan(str(binary_path))}")
     if configured:
         print(f"  Clients: {', '.join(a.name for a in configured)}")
 
-    remaining = [cls() for cls in ALL_AGENT_CLASSES if cls().key not in configured_keys]
-    if remaining:
+    if failed:
         print()
-        print(f"  {Ui.bold('Manual configuration for other clients:')}")
-        for a in remaining:
+        print(f"  {Ui.bold('Manual configuration required (auto-configure failed):')}")
+        for a in failed:
             print()
             print(f"  {Ui.bold(a.name)}")
             print(f"   {Ui.dim(a.manual_instructions(binary_path))}")
