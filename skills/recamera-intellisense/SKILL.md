@@ -42,9 +42,19 @@ All tools are exposed through the `recamera` MCP server. Register a device first
 
 - **Device**: `detect_local_device`, `add_device`, `update_device`, `remove_device`, `get_device`, `list_devices`
 - **Detection**: `get_detection_models_info`, `get_detection_model`, `set_detection_model`, `get_detection_schedule`, `set_detection_schedule`, `get_detection_rules`, `set_detection_rules`, `get_detection_events`, `clear_detection_events`
+- **Rule system** (low-level record pipeline): `get_rule_system_info`, `get_record_config`, `set_record_config`, `get_schedule_rule`, `set_schedule_rule`, `get_record_trigger`, `set_record_trigger`, `activate_http_trigger`
+- **Storage**: `get_storage_status`, `set_storage_slot`, `configure_storage_quota`, `storage_task_submit`, `storage_task_status`, `storage_task_cancel`
+- **Records** (browse recorded clips): `list_records`, `fetch_record` (relay lifecycle handled internally)
+- **Relay** (advanced): `open_relay`, `get_relay_status`, `close_relay`
 - **Capture**: `get_capture_status`, `start_capture`, `stop_capture`, `capture_image`
-- **File**: `fetch_file`, `delete_file`
+- **File** (daemon, arbitrary absolute path): `fetch_file`, `delete_file`
 - **GPIO**: `list_gpios`, `get_gpio_info`, `set_gpio_value`, `get_gpio_value`
+
+### File vs Record
+
+- `fetch_file` / `delete_file` hit the daemon's `/api/v1/file` endpoint. Use these for arbitrary absolute paths under the daemon's allowed prefix — typically capture outputs and snapshot paths returned by `get_detection_events`.
+- `list_records` / `fetch_record` go through the Record HTTP relay + nginx autoindex and are **read-only**, scoped to the enabled slot's record data directory. Prefer these when browsing existing recordings by date or reviewing clips; paths are relative to the data directory.
+- Video files and anything >5 MB come back as a direct relay URL instead of inline bytes.
 
 ## Rules
 
@@ -83,6 +93,30 @@ All tools are exposed through the `recamera` MCP server. Register a device first
 1. `list_gpios` to discover pins and capabilities.
 2. `set_gpio_value` to write (auto-configures as output).
 3. `get_gpio_value` to read (auto-configures as input with debounce).
+
+### Switch record trigger (e.g. to Timer / GPIO / HTTP)
+
+1. `get_record_trigger` to inspect the current trigger.
+2. `set_record_trigger` with a tagged union, e.g.
+   - `{ "kind": "timer", "duration_ms": 5000 }`
+   - `{ "kind": "gpio", "pin_id": 1, "active_level": 1, "duration_ms": 3000 }`
+   - `{ "kind": "http", "duration_ms": 2000 }` — then call `activate_http_trigger` to fire a record event.
+   - `{ "kind": "always_on" }` — records continuously while enabled.
+   - `{ "kind": "inference_set" }` — detection-driven (paired with `set_detection_rules`).
+3. `set_record_config` with `rule_enabled: true` to arm the pipeline.
+
+### Manage storage / free up space
+
+1. `get_storage_status` to see slots, mount state, and used bytes.
+2. `set_storage_slot` by `by_dev_path` or `by_uuid` to enable a slot (or pass empty both to disable all).
+3. `configure_storage_quota` with `quota_limit_bytes` (-1 = no limit) and `quota_rotate: true`.
+4. `storage_task_submit` with `action: "FREE_UP"` (async) or `REMOVE_FILES_OR_DIRECTORIES` (+ `files`). Poll `storage_task_status`.
+
+### Browse and fetch recordings
+
+1. `list_records` with `path: ""` to list the record data directory (relay is opened implicitly).
+2. Descend via `list_records` with a relative `path` (e.g. `"2024-05-01"`).
+3. `fetch_record` with the relative `path` of a clip. Images return inline; videos / >5 MB return a direct relay URL.
 
 ## Troubleshooting
 

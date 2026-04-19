@@ -1,11 +1,12 @@
+mod api;
 mod api_client;
-mod capture;
 mod detection;
 mod device_store;
-mod gpio;
+mod records;
 mod server;
 mod storage;
 mod types;
+mod util;
 
 use anyhow::Result;
 use rmcp::{transport::stdio, ServiceExt};
