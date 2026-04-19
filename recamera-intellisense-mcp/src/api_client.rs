@@ -199,9 +199,15 @@ impl ApiClient {
         Ok(())
     }
 
+    #[cfg(unix)]
     pub async fn detect_local(socket_path: &str) -> bool {
         tokio::net::UnixStream::connect(socket_path)
             .await
             .is_ok()
+    }
+
+    #[cfg(not(unix))]
+    pub async fn detect_local(_socket_path: &str) -> bool {
+        false
     }
 }
