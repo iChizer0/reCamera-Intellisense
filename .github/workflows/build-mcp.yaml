@@ -66,6 +66,9 @@ jobs:
           mkdir staging
           cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} staging/
           tar czf ${{ matrix.artifact }}.tar.gz -C staging .
+          # Emit a detached SHA-256 digest so the installer can verify the
+          # release asset before extraction. File format matches `sha256sum`.
+          sha256sum ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -74,17 +77,25 @@ jobs:
           New-Item -ItemType Directory -Path staging
           Copy-Item "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe" staging/
           Compress-Archive -Path staging/* -DestinationPath "${{ matrix.artifact }}.zip"
+          # Emit a detached SHA-256 digest in `sha256sum`-compatible format
+          # (``<hex>  <name>``) so the installer verification path works uniformly.
+          $hash = (Get-FileHash "${{ matrix.artifact }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.artifact }}.zip" | Out-File -FilePath "${{ matrix.artifact }}.zip.sha256" -Encoding ascii
 
       - name: Upload artifact (Unix)
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
-          path: recamera-intellisense-mcp/${{ matrix.artifact }}.tar.gz
+          path: |
+            recamera-intellisense-mcp/${{ matrix.artifact }}.tar.gz
+            recamera-intellisense-mcp/${{ matrix.artifact }}.tar.gz.sha256
 
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
-          path: recamera-intellisense-mcp/${{ matrix.artifact }}.zip
+          path: |
+            recamera-intellisense-mcp/${{ matrix.artifact }}.zip
+            recamera-intellisense-mcp/${{ matrix.artifact }}.zip.sha256

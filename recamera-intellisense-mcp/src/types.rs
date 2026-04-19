@@ -37,7 +37,10 @@ fn default_protocol() -> String {
     "http".to_string()
 }
 fn default_allow_unsecured() -> bool {
-    true
+    // Secure-by-default: require a trusted certificate chain when using HTTPS.
+    // Callers that need to skip verification (e.g. a self-signed device cert on
+    // a trusted LAN) must opt in explicitly via `allow_unsecured=true`.
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

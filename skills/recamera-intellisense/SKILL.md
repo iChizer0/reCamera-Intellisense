@@ -33,11 +33,26 @@ Operation names are identical across both (e.g. `add_device`, `capture_image`, `
 
 ### MCP transport
 
+Prefer a two-step **download → review → run** flow so you can inspect the
+installer before it touches your system. The installer verifies the downloaded
+release asset's SHA-256 against the published digest and aborts on mismatch.
+
 ```bash
-# Check if already installed (prints path, exits 0 if installed, 1 otherwise):
-curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-mcp.py | python3 - --check
-# Install (non-interactive) — auto-configures detected MCP clients, installs binary to ~/.recamera/bin/:
-curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-mcp.py | python3 - --yes
+# 1. Download the installer:
+curl -fsSLO https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-mcp.py
+# 2. Inspect it (pager / editor / diff against a pinned SHA):
+less setup-mcp.py
+# 3. Check if already installed (prints path, exits 0/1):
+python3 setup-mcp.py check
+# 4. Install (non-interactive) — auto-configures detected MCP clients,
+#    installs binary to ~/.recamera/bin/, verifies SHA-256:
+python3 setup-mcp.py install --yes
+```
+
+Express (piped) form is available for trusted environments:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-mcp.py | python3 - install --yes
 ```
 
 The installer's last line is `BINARY_PATH=<path>` for parsing.
@@ -55,9 +70,27 @@ JSON args are a single object whose keys match the command's named parameters. R
 
 ## Security considerations
 
-- **Credentials** live in `~/.recamera/devices.json`. Enforce `chmod 600`; do not mix unrelated secrets.
-- **Plain HTTP by default** (port 80) — tokens and images traverse the network unencrypted. Configure HTTPS on the device before using on untrusted networks.
-- **Trusted networks only.** This skill polls devices and downloads snapshots; treat every registered device as a data egress point.
+- **Installer integrity.** Prefer download-then-review over `curl … | python3`.
+  `setup-mcp.py` verifies the release asset's SHA-256 against
+  `<asset>.sha256` / `SHA256SUMS` and aborts on mismatch; bypass with
+  `--skip-checksum` or `RECAMERA_SKIP_CHECKSUM=1` only when you understand the risk.
+- **Credentials** live in `~/.recamera/devices.json`, written atomically with mode
+  `0600` by both transports. Do not mix unrelated secrets in that file.
+- **HTTPS certificate verification is on by default** (`allow_unsecured=false`).
+  Opt into unverified TLS per-device only for self-signed certs on a trusted LAN.
+- **Plain HTTP by default** (port 80) — tokens and images traverse the network
+  unencrypted. Configure HTTPS on the device before using on untrusted networks.
+- **`fetch_file` reads absolute paths via the daemon.** A registered device
+  becomes a data-egress point for anything under the daemon's allowed prefix —
+  register only devices you control.
+- **Record relay URLs are not bearer-protected** for the lifetime of the relay
+  (`records.rs` calls out “relay token is bearer-free”). Anyone with the URL on
+  the same network can download the file; close the relay when you are done.
+- **`set_record_trigger` supports `tty` and `http` triggers** that cause the
+  device to execute shell commands or call external endpoints. Only install
+  triggers you have reviewed.
+- **Trusted networks only.** This skill polls devices and downloads snapshots;
+  treat every registered device as a data egress point.
 - **Per-camera tokens** (`sk_...` from Web Console → Device Info → Connection Settings). Do not reuse tokens shared with other services.
 - **Source review.** Full Python sources are in `scripts/recamera_intellisense/`. Review before granting autonomous execution.
 

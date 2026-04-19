@@ -80,7 +80,8 @@ def _normalize_entry(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     protocol = raw.get("protocol", "http")
     if protocol not in ("http", "https"):
         protocol = "http"
-    allow_unsecured = bool(raw.get("allow_unsecured", True))
+    # Secure-by-default: TLS verification is on unless the user opts in.
+    allow_unsecured = bool(raw.get("allow_unsecured", False))
     port = raw.get("port")
     if port is not None:
         try:
@@ -169,7 +170,7 @@ def resolve(device_name: str) -> DeviceRecord:
         "host": entry["host"],
         "token": entry["token"],
         "protocol": entry.get("protocol", "http"),
-        "allow_unsecured": bool(entry.get("allow_unsecured", True)),
+        "allow_unsecured": bool(entry.get("allow_unsecured", False)),
         "port": entry.get("port"),
     }
     return rec
@@ -186,7 +187,7 @@ def list_records_on_disk() -> List[DeviceRecord]:
                 host=entry["host"],
                 token=entry["token"],
                 protocol=entry.get("protocol", "http"),
-                allow_unsecured=bool(entry.get("allow_unsecured", True)),
+                allow_unsecured=bool(entry.get("allow_unsecured", False)),
                 port=entry.get("port"),
             )
         )

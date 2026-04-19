@@ -80,10 +80,15 @@ def add_device(
     token: str,
     *,
     protocol: str = "http",
-    allow_unsecured: bool = True,
+    allow_unsecured: bool = False,
     port: Optional[int] = None,
 ) -> DeviceRecord:
-    """Register a new device; fails if *name* already exists. Connectivity is probed first."""
+    """Register a new device; fails if *name* already exists. Connectivity is probed first.
+
+    ``allow_unsecured`` defaults to ``False``: HTTPS connections require a trusted
+    certificate chain. Pass ``allow_unsecured=True`` only for self-signed certs on
+    a trusted network.
+    """
     _config.validate_name(name)
     _config.validate_host(host)
     _config.validate_token(token)
@@ -156,7 +161,7 @@ def update_device(
         probe_port,
         entry["token"],
         entry.get("protocol") == "https",
-        bool(entry.get("allow_unsecured", True)),
+        bool(entry.get("allow_unsecured", False)),
     )
     if err is not None:
         raise RecameraError(f"Device update failed: {err}")

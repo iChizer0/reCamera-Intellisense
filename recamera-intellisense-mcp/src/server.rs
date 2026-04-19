@@ -150,7 +150,8 @@ impl ReCameraServer {
         try_tool!(validate_not_empty(&params.host, "host"));
         try_tool!(validate_not_empty(&params.token, "token"));
         let protocol = params.protocol.as_deref().unwrap_or("http");
-        let allow_unsecured = params.allow_unsecured.unwrap_or(true);
+        // Secure-by-default: verify TLS certs unless the caller opts in.
+        let allow_unsecured = params.allow_unsecured.unwrap_or(false);
         try_tool!(
             self.client
                 .test_connection(

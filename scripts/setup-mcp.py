@@ -24,6 +24,7 @@ Zero third-party dependencies — standard library only.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -256,6 +257,26 @@ def find_asset(release: dict, target: PlatformTarget) -> tuple[str, str]:
     )
 
 
+def find_checksum_url(release: dict, asset_name: str) -> str | None:
+    """Locate a published SHA-256 digest for ``asset_name``.
+
+    Looks for (in order): ``<asset>.sha256``, ``<asset>.sha256sum``,
+    ``SHA256SUMS``, ``checksums.txt``. Returns the asset download URL
+    or ``None`` if no recognised digest asset exists in the release.
+    """
+    assets = release.get("assets", [])
+    by_name = {a.get("name", ""): a for a in assets}
+    for candidate in (f"{asset_name}.sha256", f"{asset_name}.sha256sum"):
+        asset = by_name.get(candidate)
+        if asset:
+            return asset["browser_download_url"]
+    for candidate in ("SHA256SUMS", "SHA256SUMS.txt", "checksums.txt"):
+        asset = by_name.get(candidate)
+        if asset:
+            return asset["browser_download_url"]
+    return None
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Download + install
 # ══════════════════════════════════════════════════════════════════════
@@ -294,6 +315,132 @@ def download_file(url: str, dest: Path) -> None:
                 print()
     except (HTTPError, URLError) as e:
         raise SetupError(f"Download failed: {e}") from None
+
+
+def _fetch_text(url: str, *, timeout: int = HTTP_TIMEOUT_API, max_bytes: int = 1 << 20) -> str:
+    """Download a small text asset (checksums file). Hard cap to prevent
+    unexpectedly huge payloads from exhausting memory."""
+    try:
+        with urlopen(Request(url), timeout=timeout) as resp:
+            data = resp.read(max_bytes + 1)
+    except (HTTPError, URLError) as e:
+        raise SetupError(f"Failed to download checksum asset: {e}") from None
+    if len(data) > max_bytes:
+        raise SetupError("Checksum asset exceeds 1 MiB — refusing to parse.")
+    return data.decode("utf-8", errors="replace")
+
+
+def _parse_checksum(text: str, asset_name: str) -> str | None:
+    """Extract a lowercase hex SHA-256 digest for ``asset_name``.
+
+    Supports both single-line ``sha256sum``-style files (``<hex>  <name>``)
+    and a bare hex digest. Returns ``None`` if no matching line is present.
+    """
+    stripped = text.strip()
+    # Bare digest (``<asset>.sha256`` convention: a single 64-char hex token).
+    tokens = stripped.split()
+    if len(tokens) == 1 and len(tokens[0]) == 64:
+        try:
+            int(tokens[0], 16)
+            return tokens[0].lower()
+        except ValueError:
+            pass
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        digest = parts[0].lstrip("*").lower()
+        # sha256sum uses ``*name`` for binary mode, ``name`` for text.
+        name = parts[-1].lstrip("*")
+        if len(digest) == 64 and name == asset_name:
+            try:
+                int(digest, 16)
+                return digest
+            except ValueError:
+                continue
+    return None
+
+
+def _sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(CHUNK_SIZE), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_checksum(
+    archive: Path, asset_name: str, checksum_url: str | None, *, skip: bool
+) -> None:
+    """Enforce integrity of ``archive`` against the release's SHA-256 digest.
+
+    Fail-closed policy:
+      * If a checksum asset is published and we can parse a digest for
+        ``asset_name``, the archive must match — otherwise abort.
+      * If no checksum asset is published, abort unless the caller passed
+        ``--skip-checksum`` (or ``RECAMERA_SKIP_CHECKSUM=1``); in that case
+        we warn loudly and continue.
+    """
+    actual = _sha256_of(archive)
+    if checksum_url is None:
+        msg = (
+            "Release did not publish a SHA-256 digest alongside "
+            f"{asset_name!r}; cannot verify download integrity."
+        )
+        if not skip:
+            raise SetupError(
+                msg,
+                hint=(
+                    "Re-run with --skip-checksum to proceed anyway (not "
+                    "recommended on untrusted networks), or set "
+                    "RECAMERA_SKIP_CHECKSUM=1. Downloaded digest: "
+                    f"sha256={actual}"
+                ),
+            )
+        Ui.warn(msg)
+        Ui.warn(f"Proceeding without verification (sha256={actual}).")
+        return
+    Ui.step("Verifying SHA-256 digest…")
+    try:
+        text = _fetch_text(checksum_url)
+    except SetupError:
+        if skip:
+            Ui.warn(
+                "Failed to fetch published checksum; continuing because "
+                "--skip-checksum is set."
+            )
+            Ui.warn(f"Local sha256={actual}")
+            return
+        raise
+    expected = _parse_checksum(text, asset_name)
+    if expected is None:
+        if skip:
+            Ui.warn(
+                "Checksum asset fetched but no entry matched "
+                f"{asset_name!r}; continuing because --skip-checksum is set."
+            )
+            Ui.warn(f"Local sha256={actual}")
+            return
+        raise SetupError(
+            f"Checksum asset at {checksum_url} has no entry for {asset_name!r}.",
+            hint=(
+                "Release packaging may be inconsistent. Re-run with "
+                "--skip-checksum to bypass (at your own risk)."
+            ),
+        )
+    if expected != actual:
+        raise SetupError(
+            "SHA-256 mismatch — refusing to install.",
+            hint=(
+                f"Expected {expected}\n"
+                f"Got      {actual}\n"
+                "The download may be corrupted or tampered with."
+            ),
+        )
+    Ui.info(f"SHA-256 OK ({actual[:16]}…)")
 
 
 def _safe_tar_member(tar: tarfile.TarFile, wanted: str) -> tarfile.TarInfo:
@@ -718,16 +865,29 @@ def do_install(args: argparse.Namespace) -> int:
     install_dir = Path(args.dir).expanduser().resolve()
     Ui.rule("reCamera Intellisense MCP Server — install")
 
+    skip_checksum = bool(getattr(args, "skip_checksum", False)) or os.environ.get(
+        "RECAMERA_SKIP_CHECKSUM"
+    ) == "1"
+    if skip_checksum:
+        Ui.warn(
+            "Checksum verification DISABLED — binary integrity will not be "
+            "checked. Only continue on a trusted network."
+        )
+
     target = detect_platform()
     existing = resolve_installed_binary(install_dir, target.system)
     if existing and not args.force_download:
         Ui.info(f"Binary already present: {Ui.cyan(str(existing))}")
         if Ui.ask_yes_no("Re-download and overwrite?", default=False):
-            binary_path = _download_and_extract(target, install_dir, args.version)
+            binary_path = _download_and_extract(
+                target, install_dir, args.version, skip_checksum=skip_checksum
+            )
         else:
             binary_path = existing
     else:
-        binary_path = _download_and_extract(target, install_dir, args.version)
+        binary_path = _download_and_extract(
+            target, install_dir, args.version, skip_checksum=skip_checksum
+        )
 
     Ui.info(f"Installed to {Ui.cyan(str(binary_path))}")
 
@@ -746,17 +906,23 @@ def do_install(args: argparse.Namespace) -> int:
 
 
 def _download_and_extract(
-    target: PlatformTarget, install_dir: Path, version: str | None
+    target: PlatformTarget,
+    install_dir: Path,
+    version: str | None,
+    *,
+    skip_checksum: bool,
 ) -> Path:
     release = fetch_release(version)
     tag = release.get("tag_name", "unknown")
     Ui.info(f"Release: {Ui.bold(tag)}")
 
     url, filename = find_asset(release, target)
+    checksum_url = find_checksum_url(release, filename)
     with tempfile.TemporaryDirectory() as tmp:
         archive = Path(tmp) / filename
         download_file(url, archive)
         Ui.info(f"Downloaded {filename}")
+        verify_checksum(archive, filename, checksum_url, skip=skip_checksum)
         return extract_and_install(archive, target, install_dir)
 
 
@@ -973,6 +1139,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--force-download",
         action="store_true",
         help="Re-download even if the binary already exists.",
+    )
+    install_p.add_argument(
+        "--skip-checksum",
+        action="store_true",
+        help="Bypass SHA-256 verification of the downloaded release asset. "
+        "Not recommended — use only on trusted networks or when the release "
+        "does not publish a digest yet. Equivalent to RECAMERA_SKIP_CHECKSUM=1.",
     )
     install_p.set_defaults(func=do_install)
 
