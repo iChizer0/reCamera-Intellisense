@@ -217,14 +217,41 @@ def _parse_detection_rule(v: Dict[str, Any]) -> Dict[str, Any]:
 def _detection_rule_to_json(rule: Dict[str, Any]) -> Dict[str, Any]:
     regions = rule.get("region_filter")
     if not regions:
+        # Empty/omitted region_filter means full-frame detection.
         regions = [_FULL_FRAME_REGION]
+    confidence = list(rule.get("confidence_range_filter", [0.0, 1.0]))
+    _validate_confidence_range(rule.get("name", ""), confidence)
     return {
         "sID": str(rule.get("name", "")),
         "iDebounceTimes": int(rule.get("debounce_times", 0)),
-        "lConfidenceFilter": list(rule.get("confidence_range_filter", [0.0, 1.0])),
+        "lConfidenceFilter": confidence,
         "lClassFilter": list(rule.get("label_filter", [])),
         "lRegionFilter": [{"lPolygon": poly} for poly in regions],
     }
+
+
+def _validate_confidence_range(rule_name: Any, confidence: List[Any]) -> None:
+    """Enforce ``confidence_range_filter = [min, max]`` with both ∈ [0, 1] and min ≤ max."""
+    label = f"rule {rule_name!r}" if rule_name else "rule"
+    if not isinstance(confidence, list) or len(confidence) != 2:
+        raise ValueError(
+            f"{label}: confidence_range_filter must be exactly [min, max]; "
+            f"got {len(confidence) if isinstance(confidence, list) else type(confidence).__name__} value(s)"
+        )
+    try:
+        lo, hi = float(confidence[0]), float(confidence[1])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{label}: confidence_range_filter entries must be numeric; got {confidence!r}"
+        ) from exc
+    if not (0.0 <= lo <= 1.0) or not (0.0 <= hi <= 1.0):
+        raise ValueError(
+            f"{label}: confidence_range_filter values must be within [0.0, 1.0]; got [{lo}, {hi}]"
+        )
+    if lo > hi:
+        raise ValueError(
+            f"{label}: confidence_range_filter min ({lo}) must be <= max ({hi})"
+        )
 
 
 def trigger_to_json(trigger: Dict[str, Any]) -> Dict[str, Any]:

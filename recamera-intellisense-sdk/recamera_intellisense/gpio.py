@@ -97,7 +97,11 @@ def _ensure_input(dev, pin_id: int, debounce_ms: Optional[int]) -> None:
 
 
 def set_gpio_value(device_name: str, *, pin_id: int, value: int) -> int:
-    """Drive *pin_id* to 0 or 1 (auto-switches to output mode first)."""
+    """Drive *pin_id* to 0 or 1.
+
+    Reconfigures the pin as a push-pull output first if it is not already in an
+    output state — this has the side effect of changing the pin's direction.
+    """
     if value not in (0, 1):
         raise ValueError(f"GPIO value must be 0 or 1, got {value}")
     dev = _config.resolve(device_name)
@@ -113,7 +117,13 @@ def get_gpio_value(
     pin_id: int,
     debounce_ms: Optional[int] = _DEBOUNCE_MS_DEFAULT,
 ) -> int:
-    """Read *pin_id* (auto-switches to input mode first)."""
+    """Read *pin_id* as a 0/1 integer.
+
+    Reconfigures the pin as a floating input first if it is not already in an
+    input state — this has the side effect of changing the pin's direction.
+    When ``debounce_ms > 0`` and the current edge is ``none``, the SDK also
+    enables both-edge detection (the device rejects debounce with edge=none).
+    """
     dev = _config.resolve(device_name)
     pin_id = int(pin_id)
     _ensure_input(dev, pin_id, debounce_ms)

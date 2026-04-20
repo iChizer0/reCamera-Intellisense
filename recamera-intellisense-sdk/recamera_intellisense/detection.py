@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from . import rule as _rule
@@ -78,10 +79,44 @@ def get_detection_events(
     start_unix_ms: Optional[int] = None,
     end_unix_ms: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Alias for :func:`files.get_intellisense_events`."""
-    return _files.get_intellisense_events(
+    """Normalized detection events, shape-compatible with the MCP server.
+
+    Each event is ``{timestamp, timestamp_unix_ms, rule_name, snapshot_path?}`` where
+    ``timestamp`` is an ISO-8601 UTC string. Use :func:`files.get_intellisense_events`
+    to access the raw daemon payloads instead.
+    """
+    raw = _files.get_intellisense_events(
         device_name, start_unix_ms=start_unix_ms, end_unix_ms=end_unix_ms
     )
+    out: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        ts = item.get("timestamp")
+        if not isinstance(ts, (int, float)):
+            continue
+        ts_ms = int(ts)
+        rule_id = (
+            (item.get("id") or "").strip() if isinstance(item.get("id"), str) else ""
+        )
+        rule_name = rule_id or str(item.get("type", ""))
+        file_event = item.get("file_event")
+        snapshot_path: Optional[str] = None
+        if isinstance(file_event, dict):
+            p = file_event.get("path")
+            if isinstance(p, str) and p:
+                snapshot_path = p
+        event = {
+            "timestamp": datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "timestamp_unix_ms": ts_ms,
+            "rule_name": rule_name,
+        }
+        if snapshot_path is not None:
+            event["snapshot_path"] = snapshot_path
+        out.append(event)
+    return out
 
 
 def clear_detection_events(device_name: str) -> None:

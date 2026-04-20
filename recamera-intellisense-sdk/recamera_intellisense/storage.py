@@ -161,7 +161,18 @@ def storage_task_submit(
     sync: bool = False,
     files: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Submit a storage action. ``sync=True`` blocks until completion."""
+    """Submit a storage action. ``sync=True`` blocks until completion.
+
+    ``FORMAT`` and ``FREE_UP`` can take a long time and are rejected with
+    ``sync=True`` (submit async and poll :func:`storage_task_status` instead).
+    """
+    action_canonical = normalize_action(action)
+    if sync and action_canonical in ("FORMAT", "FREE_UP"):
+        raise ValueError(
+            f"Action '{action_canonical}' may take a long time and cannot be run "
+            f"with sync=true. Submit async (sync=false) and poll with "
+            f"storage_task_status."
+        )
     dev = _config.resolve(device_name)
     payload = _task_payload("SYNC" if sync else "ASYNC_SUBMIT", action, dev_path, files)
     resp = _http.post_json(dev, PATH_CONTROL, payload=payload)

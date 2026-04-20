@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import os
 import socket
 from typing import Any, Dict, List, Optional
 
@@ -21,9 +22,9 @@ __all__ = [
 
 # Connectivity probe
 
-_PROBE_PATH = "/api/v1/generate-204"
+_PROBE_PATH = "/api/v1/recamera-generate-204"
 _PROBE_TIMEOUT = 3.0
-_LOCAL_PROBE_PORT = 16384
+_LOCAL_DAEMON_SOCKET = "/dev/shm/rcisd.sock"
 
 
 def _probe(
@@ -66,12 +67,27 @@ def _probe(
         return f"Unable to connect to {host}:{port} — {exc}."
 
 
-def detect_local_device(host: str = "127.0.0.1") -> Optional[str]:
-    """Return *host* if a local daemon answers ``/api/v1/generate-204``, else ``None``."""
-    err = _probe(
-        host, _LOCAL_PROBE_PORT, token=None, use_tls=False, allow_unsecured=True
-    )
-    return host if err is None else None
+def detect_local_device(socket_path: str = _LOCAL_DAEMON_SOCKET) -> Optional[str]:
+    """Return *socket_path* if a local ``rcisd`` daemon accepts a Unix-socket
+    connection there, else ``None``.
+
+    The daemon serves its HTTP API over a Unix domain socket (default
+    ``/dev/shm/rcisd.sock``); it does not listen on TCP. This mirrors the MCP
+    server's ``detect_local_device`` tool.
+    """
+    if not socket_path or not hasattr(socket, "AF_UNIX"):
+        return None
+    if not os.path.exists(socket_path):
+        return None
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(_PROBE_TIMEOUT)
+    try:
+        sock.connect(socket_path)
+    except OSError:
+        return None
+    finally:
+        sock.close()
+    return socket_path
 
 
 def add_device(
@@ -205,7 +221,7 @@ COMMANDS = {
     "list_devices": list_devices,
 }
 COMMAND_SCHEMAS = {
-    "detect_local_device": {"required": set(), "optional": {"host"}},
+    "detect_local_device": {"required": set(), "optional": {"socket_path"}},
     "add_device": {
         "required": {"name", "host", "token"},
         "optional": {"protocol", "allow_unsecured", "port"},

@@ -1,10 +1,9 @@
 ---
 name: recamera-intellisense
-description: Use when onboarding or controlling a reCamera V2 device — registering the device, configuring AI detection models / rules / schedules, watching detection events, capturing images, browsing recordings, managing storage slots, or driving GPIO. Exposes the same operations through MCP tools (default for agents) and a stdlib-only Python CLI (automation / shell). Any task mentioning reCamera, `sk_` camera tokens, on-device detection rules, or recorded clips on the device should trigger this skill.
+description: Register and control reCamera V2 devices from an agent — onboard cameras, pick AI detection models by name, configure rule-based triggers (AI / timer / GPIO / TTY / HTTP / always-on), poll detection events with snapshots, capture JPG/RAW/MP4 on demand, browse recorded clips, manage storage, and drive GPIO pins. Uses a bundled stdlib-only Python SDK invoked via a single JSON argument per command. Trigger this skill whenever the user mentions reCamera, camera onboarding, object/person detection, event polling, snapshot or video capture, recording rules, on-device GPIO, or asks to wire a physical camera into an agent workflow — even when they don't name the product explicitly.
 metadata: {
   "openclaw": {
     "emoji": "📷",
-    "version": "2.0.0",
     "requires": {
       "bins": ["python3"],
       "config_paths": ["~/.recamera/devices.json"]
@@ -16,273 +15,256 @@ user-invocable: true
 
 # reCamera Intellisense
 
-Device management, AI detection, capture, storage, and GPIO for [reCamera V2](https://wiki.seeedstudio.com/recamera/).
+Drive one or more [reCamera V2](https://wiki.seeedstudio.com/recamera/) devices: device registration, AI detection configuration, rule-based recording, event polling, on-demand capture, storage/records management, and GPIO control. The skill bundles a Python SDK (`scripts/recamera_intellisense/`) that is the **single source of truth** for every command's parameters; the same package backs the MCP server, so CLI and MCP schemas are identical.
 
-## Two transports, one device store
+## Requirements
 
-Both transports read/write `~/.recamera/devices.json` (mode `0600`, atomic). Register a device once → available to both.
+- `python3` 3.8+ (stdlib only — no `pip install` needed)
+- Reachable reCamera HTTP/HTTPS API (default TCP `80`/`443`) **or** a local `rcisd` daemon serving HTTP over the Unix socket `/dev/shm/rcisd.sock`
+- Per-device auth token in the form `sk_<chars>` (Web Console → Device Info → Connection Settings → HTTP/HTTPS)
+- Credential store at `~/.recamera/devices.json` (auto-created, chmod `600`). Shared with the MCP server if installed.
 
-| Transport | When to use |
-|---|---|
-| **MCP tools** | Default for interactive agent turns. Structured arguments, typed errors, inline image results. Tool names are the bare operation name (e.g. `add_device`); any `server:` prefix is added by the MCP host. |
-| **Python CLI** (`recamera_intellisense`) | Shell scripts, CI, cron, or hosts without an MCP client. Stdlib-only; no install — package is bundled under `scripts/`. |
+## Security
 
-Operation names are identical across both (`add_device`, `capture_image`, `set_detection_rules`, …). A small number of helpers are **SDK-only** and marked below as `[sdk]`; everything else is available in both transports with the same name.
+- **Tokens are long-lived bearer credentials** — do not commit `~/.recamera/devices.json`, and avoid logging the `token` field.
+- **HTTP is the default transport.** On untrusted networks, provision HTTPS on the device and register with `"protocol":"https"`. Use `"allow_unsecured": true` only for LANs with self-signed certs.
+- **Scope of trust**: this skill reads and writes files on the camera (captures, events), controls GPIO, and can format storage. Only point it at hardware you own.
+- **Source review encouraged** — the full SDK is under `scripts/recamera_intellisense/`; every command is a short Python function.
 
-## Setup
+## Invocation
 
-### MCP transport
-
-Prefer **download → review → run** so the installer can be inspected before it touches the system. It downloads a signed release asset, verifies its SHA-256 against the published digest, and aborts on mismatch.
-
-```bash
-# 1. Download the installer:
-curl -fsSLO https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-mcp.py
-# 2. Inspect it (pager / editor / diff against a pinned SHA):
-less setup-mcp.py
-# 3. Check if already installed (prints path; exit 0 = present, 1 = missing):
-python3 setup-mcp.py check
-# 4. Install (non-interactive) — auto-configures detected MCP clients,
-#    installs binary to ~/.recamera/bin/, verifies SHA-256:
-python3 setup-mcp.py install --yes
-```
-
-Subcommands: `install | configure | check | uninstall | list`. The last line of `install` is `BINARY_PATH=<path>` for scripting. Piped form (trusted environments only):
+The bundled SDK runs without installation. From `{baseDir}` (the skill root):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-mcp.py | python3 - install --yes
+# One-shot
+PYTHONPATH="{baseDir}/scripts" python3 -m recamera_intellisense <command> '<json>'
+
+# Convenience alias for a session
+export PYTHONPATH="{baseDir}/scripts"
+alias rci='python3 -m recamera_intellisense'
+rci list_devices
 ```
 
-### CLI transport
+Calling convention (uniform across every command):
 
-No install. From the skill directory:
+- **Input**: exactly one CLI positional argument — a JSON object whose keys match the function's keyword parameters. Omit the argument for commands with no required fields (e.g. `list_devices`).
+- **Success**: pretty-printed JSON on stdout (mutating commands may print nothing); exit code `0`.
+- **Failure**: actionable message on stderr; non-zero exit code. Surface the stderr back to the user and propose one concrete fix.
+- **Discovery**: `python3 -m recamera_intellisense` with no args prints every command with its required/optional keys.
 
-```bash
-PYTHONPATH=scripts python3 -m recamera_intellisense <command> '<json-args>'
-PYTHONPATH=scripts python3 -m recamera_intellisense list-commands   # dump all commands
-PYTHONPATH=scripts python3 -m recamera_intellisense help            # per-command required/optional args
+Python use (in-process, preferred for loops):
+
+```python
+import sys, time
+sys.path.insert(0, "{baseDir}/scripts")
+from recamera_intellisense import (
+    list_devices, set_detection_rules, get_detection_events,
+    capture_image, fetch_file,
+)
 ```
 
-JSON args are a single object whose keys match the command's named parameters. Results print as pretty JSON on stdout; errors exit non-zero with `{"error": ..., "code": ..., "status": ...}` on stderr.
+## Command catalogue
 
-## Security considerations
+All commands accept `device_name` (string) unless noted. `device_name` resolves against `~/.recamera/devices.json`; run `list_devices` to see what is registered.
 
-- **Installer integrity.** Prefer download-then-review over `curl … | python3`. `setup-mcp.py` verifies the release asset's SHA-256 against `<asset>.sha256` / `SHA256SUMS` and aborts on mismatch. Bypass with `--skip-checksum` or `RECAMERA_SKIP_CHECKSUM=1` only when you understand the risk.
-- **Credentials** live in `~/.recamera/devices.json`, written atomically at mode `0600` by both transports. Do not mix unrelated secrets there.
-- **HTTPS cert verification is on by default** (`allow_unsecured=false`). Opt in per-device only for self-signed certs on a trusted LAN.
-- **Plain HTTP by default** (port 80): tokens and images traverse the network unencrypted. Configure HTTPS on the device before using on untrusted networks.
-- **`fetch_file` reads absolute paths via the daemon.** A registered device becomes a data-egress point for anything under the daemon's allowed prefix — register only devices you control.
-- **Record relay URLs are not bearer-protected** for the lifetime of the relay (`records.rs`: "relay token is bearer-free"). Anyone with the URL on the same network can download the file; close the relay when done.
-- **`set_record_trigger` supports `tty` and `http` triggers** that execute shell commands or call external endpoints. Only install triggers you have reviewed.
-- **Per-camera tokens** (`sk_…`, format enforced by `_TOKEN_RE = ^sk_[A-Za-z0-9_\-]+$`) come from Web Console → Device Info → Connection Settings. Do not reuse tokens shared with other services.
-- **Source review.** Full SDK sources are in `scripts/recamera_intellisense/`. Review before granting autonomous execution.
+### Device registry
+| Command | Required | Optional |
+|---|---|---|
+| `detect_local_device` | — | `socket_path` (default `/dev/shm/rcisd.sock`) |
+| `add_device` | `name`, `host`, `token` | `protocol` (`http`/`https`), `allow_unsecured`, `port` |
+| `update_device` | `device_name` | any of `host`, `token`, `protocol`, `allow_unsecured`, `port` |
+| `remove_device` / `get_device` | `device_name` | — |
+| `list_devices` | — | — |
 
-## Operation groups
+`add_device` / `update_device` probe `/api/v1/recamera-generate-204` before persisting; a bad token or host fails fast.
 
-Register a device first (`add_device`), then pass `device_name` to everything else.
+### Detection (high-level facade, AI-only)
+| Command | Required | Optional |
+|---|---|---|
+| `get_detection_models_info` | `device_name` | — |
+| `get_detection_model` | `device_name` | — |
+| `set_detection_model` | `device_name` | **one of** `model_id` or `model_name`, `fps` (default 30) |
+| `get_detection_schedule` / `set_detection_schedule` | `device_name` | `schedule` (null/empty disables → always active) |
+| `get_detection_rules` | `device_name` | — |
+| `set_detection_rules` | `device_name`, `rules` | `ensure_writer` (default `true`), `ensure_storage` (default `true`) |
+| `get_detection_events` | `device_name` | `start_unix_ms`, `end_unix_ms` (inclusive) |
+| `clear_detection_events` | `device_name` | — |
 
-- **Device** — `detect_local_device`, `add_device`, `update_device`, `remove_device`, `get_device`, `list_devices`
-- **Detection** (high level) — `get_detection_models_info`, `get_detection_model`, `set_detection_model`, `get_detection_schedule`, `set_detection_schedule`, `get_detection_rules`, `set_detection_rules`, `get_detection_events`, `clear_detection_events`
-- **Rule pipeline** (low level) — `get_rule_system_info`, `get_record_config`, `set_record_config`, `get_schedule_rule`, `set_schedule_rule`, `get_record_trigger`, `set_record_trigger`, `activate_http_trigger`
-- **Storage** — `get_storage_status`, `set_storage_slot`, `configure_storage_quota`, `storage_task_submit`, `storage_task_status`, `storage_task_cancel`
-- **Records** (browse clips, relative paths) — `list_records`, `fetch_record`
-- **Capture** — `get_capture_status`, `start_capture`, `stop_capture`, `capture_image`
-- **File** (daemon, absolute paths) — `fetch_file`, `delete_file`
-- **GPIO** — `list_gpios`, `get_gpio_info`, `set_gpio_value`, `get_gpio_value`
-- **SDK-only** `[sdk]` — `get_intellisense_events`, `clear_intellisense_events` (low-level daemon event bus; `get_detection_events` / `clear_detection_events` are direct aliases and are the form exposed over MCP).
+`set_detection_rules` installs an `inference_set` record trigger and, by default, enables the rule pipeline with a JPG writer and a ready storage slot — override only if the caller already configured them. `get_detection_rules` returns `[]` whenever the current trigger is **not** `inference_set`.
 
-### `fetch_file` vs `fetch_record`
+### Rule system (low-level, all trigger kinds)
+`get_rule_system_info`, `get_record_config`, `set_record_config`, `get_schedule_rule`, `set_schedule_rule`, `get_record_trigger`, `set_record_trigger`, `activate_http_trigger`. Use these to combine detection with non-AI triggers (see below) or to tune the writer.
 
-| Tool | Backend | Path | Scope | When |
-|---|---|---|---|---|
-| `fetch_file` | daemon `/api/v1/file` | **absolute** | daemon-allowed prefix | capture outputs, `snapshot_path` from detection events |
-| `fetch_record` | Record relay + nginx autoindex | **relative** to enabled slot's `data_dir` | recordings only | browsing existing clips under `list_records` |
+### Capture (independent of rule pipeline)
+| Command | Required | Optional |
+|---|---|---|
+| `get_capture_status` | `device_name` | — |
+| `start_capture` | `device_name` | `output` (absolute path), `format` (`JPG`/`RAW`/`MP4`), `video_length_seconds` |
+| `stop_capture` | `device_name` | — |
+| `capture_image` | `device_name` | `output`, `timeout` |
 
-Both render images inline (base64). Payloads > 5 MB and any `video/*` MIME return the direct relay/daemon URL instead of bytes.
+`capture_image` is the one-shot helper: it starts a `JPG`, polls until terminal, fetches the file, and returns `{event, path, size, content_base64}` (where `event` is the terminal capture event with `status == "COMPLETED"`). `MP4` must go through `start_capture` + poll `get_capture_status` + `fetch_file`.
 
-### `detect_local_device` — transport differs
+### Storage
+`get_storage_status`, `set_storage_slot`, `configure_storage_quota`, `storage_task_submit`, `storage_task_status`, `storage_task_cancel`. Actions: `FORMAT`, `FREE_UP`, `EJECT`, `REMOVE_FILES_OR_DIRECTORIES` (the last requires `files`, paths relative to the slot's data directory). Default is async; `"sync": true` is accepted only for fast actions (`EJECT`, `REMOVE_FILES_OR_DIRECTORIES`) — `FORMAT`/`FREE_UP` must run async and be polled with `storage_task_status`.
 
-| Transport | Default arg | What it probes | Success value |
-|---|---|---|---|
-| **MCP** | `socket_path = "/dev/shm/rcisd.sock"` | Local Unix socket (daemon IPC) | Returns the socket path. |
-| **SDK** | `host = "127.0.0.1"` | `http://<host>:16384/api/v1/generate-204` | Returns `host` (or `None`). |
+### Records (relay-backed browsing, recommended for recordings)
+- `list_records {device_name, path?, dev_path?, limit?, offset?}` — `path` is relative to the record data directory (empty = root). Returns a paginated object `{entries, offset, limit, total, has_more}`; directories sort first, then by name. `limit` defaults to `100`, max `500`. Slot auto-resolved if `dev_path` omitted.
+- `fetch_record {device_name, path, dev_path?, max_inline_bytes?}` — images/≤5 MiB inline as base64; videos or larger payloads return `{url, size, note}`.
 
-Use the MCP form on the device itself; use the SDK form when you can reach the daemon only over TCP.
-
-## Parameter schemas (canonical)
-
-All parameters below are keyword-only in the SDK; MCP tools take a JSON object with the same keys. **Bold = required.** Fields prefixed `[sdk]` are SDK-only; MCP auto-applies equivalent behaviour.
-
-### `add_device`
-`name*, host*, token*` (token must match `^sk_…$`), `protocol="http"|"https"` (default `"http"`), `allow_unsecured=false`, `port=None`. Connectivity is probed before the record is written; failure aborts.
-
-### `update_device`
-`device_name*` + any subset of `host, token, protocol, allow_unsecured, port`. Unspecified fields preserved.
-
-### `set_detection_model`
-`device_name*`, **exactly one of** `model_id: int` or `model_name: str`. SDK also accepts `fps: int = 30` `[sdk]`.
-
-### `set_detection_schedule` / `set_schedule_rule`
-`device_name*, schedule: list[{start, end}] | null`. Range format `"Day HH:MM:SS"` (e.g. `"Mon 08:00:00"`); `"Day 24:00:00"` allowed as end-of-day. `null` or `[]` disables the schedule (rule active 24/7).
-
-### `set_detection_rules`
-`device_name*, rules: list[DetectionRule]`. Each rule:
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `name` | string | *required* | Rule ID (unique per device). |
-| `label_filter` | string[] | `[]` (any) | Class labels the model emits. |
-| `confidence_range_filter` | `[min, max]` | `[0.25, 1.0]` | Per-detection score window. |
-| `debounce_times` | int | `3` | Consecutive matching frames before firing. |
-| `region_filter` | `number[][][]` or `null` | full frame | List of polygons of normalized `[x, y]` in `[0, 1]`. |
-
-MCP auto-arms the pipeline (`rule_enabled=true`, writer `JPG`) and ensures a storage slot. SDK does the same via `ensure_writer=True, ensure_storage=True` `[sdk]` which can be disabled for advanced flows.
-
-### `set_record_config`
-`device_name*, rule_enabled*: bool, writer_format*: "JPG"|"MP4"|"RAW", writer_interval_ms: int = 0` (`0` = continuous).
-
-### `set_record_trigger`
-`device_name*, trigger: RecordTrigger`. Tagged union on `kind`:
-
-```jsonc
-{ "kind": "inference_set", "rules": [/* DetectionRule[] — see above */] }
-{ "kind": "timer",        "interval_seconds": 60 }
-{ "kind": "gpio",         "name": "GPIO_01", /* OR "num": 1 */
-                          "state": "DISABLED|FLOATING|PULL_UP|PULL_DOWN",
-                          "signal": "HIGH|LOW|RISING|FALLING",
-                          "debounce_ms": 0 }
-{ "kind": "tty",          "name": "<tty socket name>", "command": "<non-empty>" }
-{ "kind": "http" }        // followed by activate_http_trigger to fire one-shot events
-{ "kind": "always_on" }   // re-arms using writer_interval_ms pacing
-```
-
-### `set_storage_slot`
-`device_name*, by_dev_path: str = "", by_uuid: str = ""`. Both empty → disable all slots. Specify exactly one selector to choose a slot.
-
-### `configure_storage_quota`
-`device_name*, dev_path*: str, quota_limit_bytes*: int` (`-1` = no limit), `quota_rotate: bool = true`.
-
-### `storage_task_submit`
-`device_name*, action*: "FORMAT"|"FREE_UP"|"EJECT"|"REMOVE_FILES_OR_DIRECTORIES", dev_path*: str, files: string[] = []` (required for `REMOVE_*`, relative to `data_dir`), `sync: bool = false` (default submits async; poll with `storage_task_status`, cancel with `storage_task_cancel`).
-
-### `list_records` / `fetch_record`
-`device_name*`, `path: str = ""` (relative to the enabled slot's `data_dir`; empty = root for `list_records`; required for `fetch_record`), `dev_path: str | null = None` (override the slot).
-
-### `fetch_file` / `delete_file`
-`device_name*, path*: str` — absolute path on the device under the daemon-allowed prefix.
-
-### `start_capture` / `capture_image`
-`device_name*, output: str | null = None` (absolute path under a mount; defaults to the enabled slot's `<mount>/<data_dir>`, falling back to `/mnt/rc_mmcblk0p8/reCamera`), `format: "JPG"|"RAW"|"MP4" = "JPG"`, `video_length_seconds: int | null = None` (MP4 only). `capture_image` also takes `timeout: float = 5.0` and ignores `format` / `video_length_seconds` (always `JPG`).
+### Files (daemon, arbitrary absolute paths)
+- `fetch_file {device_name, path, max_inline_bytes?}` — for detection-event snapshots (`snapshot_path` is absolute) and arbitrary allowed paths. Returns `{path, content_type, size, content_base64}` inline, or `{path, content_type, size, note}` when oversized. (Python callers may also pass `raw=True` to get raw `bytes`; the CLI does not accept `raw`.)
+- `delete_file {device_name, path}`.
 
 ### GPIO
-- `get_gpio_info`: `device_name*, pin_id*: int`.
-- `set_gpio_value`: `device_name*, pin_id*: int, value*: 0|1`. Auto-configures as output.
-- `get_gpio_value`: `device_name*, pin_id*: int, debounce_ms: int = 100`. Auto-configures as input; non-zero debounce enables both-edge detection.
+`list_gpios`, `get_gpio_info {pin_id}`, `set_gpio_value {pin_id, value}` → returns the written value (`0`/`1`); auto-configures push-pull output. `get_gpio_value {pin_id, debounce_ms?}` → returns `0` or `1` as an integer; auto-configures floating input. Debounce defaults to 100 ms; setting it > 0 implicitly enables both-edge detection.
 
-### `get_detection_events`
-`device_name*, start_unix_ms: int | null = None, end_unix_ms: int | null = None`. Both bounds inclusive. Returns `[{timestamp, timestamp_unix_ms, rule_name, snapshot_path?}]`.
+## Key schemas
 
-## Return-shape notes
+### Detection rule
+```json
+{
+  "name": "front-door-person",
+  "debounce_times": 3,
+  "confidence_range_filter": [0.25, 1.0],
+  "label_filter": ["person"],
+  "region_filter": [[[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9]]]
+}
+```
 
-- `capture_image` (SDK): `{"event", "path", "size", "content_base64"}`. (MCP): JSON metadata block + an inline `image/jpeg` Content item.
-- `fetch_record` (SDK): `{"path", "content_type", "content_base64", "size", "url"}` for inline, `{"path", "url", "size", "content_type", "note"}` for oversized. (MCP): inline image/text Content, or a text message containing the direct URL for video / >5 MB.
-- `fetch_file` (SDK): same inline/oversized shapes; `raw=True` returns raw `bytes`.
-- `list_records` entries: `{"name", "type": "file"|"directory", "mtime"?, "size"?}`.
+- `label_filter` contains **label names as they appear in `get_detection_models_info`.labels** — never indexes. Leave empty to match any label.
+- `region_filter` is a list of polygons of normalized `[x, y]` in `[0,1]`; omit or leave null for the full frame.
+- `confidence_range_filter` is `[min, max]` with both in `[0.0, 1.0]` and `min ≤ max`; defaults to `[0.25, 1.0]`. `debounce_times` defaults to `3` (consecutive matching frames).
 
-## Rules of thumb
+### Schedule range
+`{"start": "Mon 08:00:00", "end": "Mon 18:00:00"}` — three-letter day (`Mon`/`Tue`/`Wed`/`Thu`/`Fri`/`Sat`/`Sun`); `Day 24:00:00` is valid. Pass a list; `null` or `[]` disables and means "always active".
 
-1. Prefer metadata over bytes: call `get_detection_events` first; only `fetch_file` the `snapshot_path` when the image is actually needed.
-2. Cursor pagination for events: keep the last `timestamp_unix_ms` and pass `start_unix_ms = last + 1` next call.
-3. Set the detection model *before* installing rules — rules reference class labels the model knows.
-4. After changing the trigger manually, arm the pipeline with `set_record_config(rule_enabled=true, writer_format="JPG")`. `set_detection_rules` does this for you.
-5. On error, surface the device message verbatim and suggest exactly one concrete fix.
+### Record trigger (tagged union, `kind` field)
+```json
+{"kind":"inference_set", "rules":[ /* DetectionRule[] */]}
+{"kind":"timer", "interval_seconds": 60}
+{"kind":"gpio", "num":1, "state":"PULL_UP", "signal":"FALLING", "debounce_ms":50}
+{"kind":"tty",  "name":"tty0", "command":"SHOOT"}
+{"kind":"http"}
+{"kind":"always_on"}
+```
+For `gpio` provide one of `name` or `num`; `state` ∈ {`DISABLED`,`FLOATING`,`PULL_UP`,`PULL_DOWN`}; `signal` ∈ {`HIGH`,`LOW`,`RISING`,`FALLING`}.
+
+### Detection event
+```json
+{"timestamp":"2026-04-20T12:34:56Z","timestamp_unix_ms":1745152496000,
+ "rule_name":"front-door-person","snapshot_path":"/mnt/.../abcd.jpg"}
+```
+`snapshot_path` (when present) is an absolute on-device path — feed it to `fetch_file`, not `fetch_record`.
+
+## Agent rules
+
+1. Always supply a complete JSON object; never prompt interactively.
+2. Identify the target by `device_name` (preferred). `list_devices` is cheap — call it if unsure.
+3. Token format must match `sk_[A-Za-z0-9_\-]+`; validation is enforced by `add_device`.
+4. `label_filter` takes **label names** from `get_detection_models_info`. Do not translate names into numeric indexes — the MCP/SDK expects strings.
+5. For AI-only use, prefer `set_detection_rules` (it ensures writer + storage). For hybrid triggers (GPIO, timer, TTY, HTTP, always-on), use `set_record_trigger` directly — only one record trigger is active at a time.
+6. Poll `get_detection_events` with a checkpointed `start_unix_ms` (1–10 s cadence). Events accumulate on-device; `clear_detection_events` to reset.
+7. Prefer event metadata first; fetch imagery only when the user needs it. Images/≤5 MiB inline; videos/larger return a URL + `note`.
+8. When a storage slot is required (rules, timer, always-on), the facade's `ensure_storage=true` default will select the internal slot if none is enabled; for removable media the user must provision a slot beforehand.
 
 ## Workflows
 
-### Onboard a device
+### 1 — Onboard a device
+1. (Optional) `detect_local_device` to confirm a local daemon.
+2. `add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxx"}'`.
+3. `list_devices` to confirm.
 
-1. `add_device` with `name`, `host`, `token`. Connectivity is probed automatically — failure aborts the write.
-2. `list_devices` to confirm.
+### 2 — Person/object detection by name
+1. `get_detection_models_info` → inspect `labels` to choose a target label.
+2. `set_detection_model '{"device_name":"cam1","model_name":"yolo11n"}'`.
+3. `set_detection_rules '{"device_name":"cam1","rules":[{"name":"front-door-person","label_filter":["person"],"debounce_times":3}]}'`.
+4. (Optional) `set_detection_schedule` for office hours.
+5. `clear_detection_events` to start fresh.
 
-```bash
-PYTHONPATH=scripts python3 -m recamera_intellisense add_device \
-  '{"name":"lab","host":"192.168.1.42","token":"sk_abc123"}'
+### 3 — Monitor events (long-running)
+```python
+ckpt = int(time.time() * 1000)
+while True:
+    events = get_detection_events(device_name="cam1", start_unix_ms=ckpt)
+    for e in events:
+        ckpt = max(ckpt, e["timestamp_unix_ms"] + 1)
+        if e.get("snapshot_path"):
+            img = fetch_file(device_name="cam1", path=e["snapshot_path"])
+            # img["content_base64"] or dispatch on img["url"] when oversized
+    time.sleep(2)
 ```
 
-### Object detection by label
+### 4 — On-demand snapshot / video
+- **JPG**: `capture_image '{"device_name":"cam1"}'` → returns base64.
+- **MP4**: `start_capture '{"device_name":"cam1","format":"MP4","video_length_seconds":10}'`; poll `get_capture_status` until `last_capture.status ∈ {COMPLETED, FAILED, INTERRUPTED, CANCELED}`; `fetch_file '{"device_name":"cam1","path":"<absolute path from event>"}'`.
 
-> **Schedule gates detection.** If the active schedule excludes the current time, inference rules stay installed but no new events are produced. When debugging "no events", check `get_detection_schedule` and ensure `now` is inside at least one range.
+### 5 — Browse and retrieve recordings
+- `list_records '{"device_name":"cam1"}'` → `{entries, offset, limit, total, has_more}`; iterate top-level date folders from `entries`.
+- `list_records '{"device_name":"cam1","path":"2026-04-20","limit":200,"offset":0}'` — drill in, paginate if `has_more` is true.
+- `fetch_record '{"device_name":"cam1","path":"2026-04-20/clip-001.mp4"}'` → returns `{url, note}` for video.
 
-1. `get_detection_models_info` → pick the model whose `labels` contain the target class.
-2. `set_detection_model` with `model_id` *or* `model_name`.
-3. `set_detection_rules` (auto-arms pipeline + storage):
+### 6 — Hybrid trigger (GPIO pulse → 5 s MP4)
+```json
+{"device_name":"cam1",
+ "trigger":{"kind":"gpio","num":1,"state":"PULL_UP","signal":"FALLING","debounce_ms":50}}
+```
+Pair with `set_record_config '{"device_name":"cam1","rule_enabled":true,"writer_format":"MP4","writer_interval_ms":0}'` and ensure a storage slot is selected (`set_storage_slot`).
 
-   ```json
-   {
-     "device_name": "lab",
-     "rules": [{
-       "name": "person-rule",
-       "label_filter": ["person"],
-       "confidence_range_filter": [0.5, 1.0],
-       "debounce_times": 3
-     }]
-   }
-   ```
-4. `clear_detection_events` to reset the event log.
+### 7 — GPIO control
+- Read: `get_gpio_value '{"device_name":"cam1","pin_id":2,"debounce_ms":50}'` → prints `0` or `1`.
+- Write: `set_gpio_value '{"device_name":"cam1","pin_id":1,"value":1}'` → prints `1`.
 
-### Monitor events (polling loop)
+## CLI quickstart
 
-1. `start_ms = now_ms()`.
-2. `get_detection_events(device_name, start_unix_ms=start_ms)`.
-3. If non-empty: `start_ms = max(event.timestamp_unix_ms for event in events) + 1`; for each event of interest, `fetch_file(path=event.snapshot_path)`.
-4. Sleep, repeat.
+```bash
+export PYTHONPATH="{baseDir}/scripts"
+alias rci='python3 -m recamera_intellisense'
 
-### On-demand image capture
+rci                                                                 # list all commands
+rci add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxx"}'
+rci list_devices
+rci get_detection_models_info '{"device_name":"cam1"}'
+rci set_detection_model      '{"device_name":"cam1","model_name":"yolo11n"}'
+rci set_detection_rules      '{"device_name":"cam1","rules":[{"name":"person","label_filter":["person"]}]}'
+rci get_detection_events     '{"device_name":"cam1","start_unix_ms":1713500000000}'
+rci capture_image            '{"device_name":"cam1"}'
+rci list_records             '{"device_name":"cam1"}'
+rci fetch_record             '{"device_name":"cam1","path":"2026-04-20/evt-001.jpg"}'
+rci get_storage_status       '{"device_name":"cam1"}'
+rci set_gpio_value           '{"device_name":"cam1","pin_id":1,"value":1}'
+```
 
-`capture_image` starts a JPG capture, polls to terminal state (`COMPLETED|FAILED|INTERRUPTED|CANCELED`), fetches the file via the daemon, and returns the bytes. `output` is optional and defaults to the enabled slot's record directory.
+## Execution checklist (copy for multi-step tasks)
 
-### GPIO control
-
-1. `list_gpios` → pins + capabilities.
-2. `set_gpio_value(pin_id, value=0|1)` — auto-switches to output.
-3. `get_gpio_value(pin_id, debounce_ms=100)` — auto-switches to input; `debounce_ms > 0` auto-enables edge detection.
-
-### Switch record trigger
-
-> **Replaces any active detection rules.** Detection *is* an `inference_set` trigger, so choosing any other `kind` stops event generation until `set_detection_rules` is called again. Read the current trigger first and confirm before overwriting.
-
-1. `get_record_trigger` — inspect current shape.
-2. `set_record_trigger` with a tagged-union payload (see schema above).
-3. `set_record_config(rule_enabled=true, writer_format="JPG")` to arm the pipeline.
-4. For `kind: "http"`, fire one-shot events with `activate_http_trigger`.
-
-### Manage storage
-
-> **Affects detection output.** Disabling all slots (`set_storage_slot` with both selectors empty) leaves the pipeline with nowhere to write — detection continues but snapshots/events silently vanish. `FREE_UP` / `REMOVE_FILES_OR_DIRECTORIES` can delete snapshots still referenced by recent events, causing `fetch_file` 404s. Prefer quota rotation over bulk deletion when detection is active.
-
-1. `get_storage_status` → slots, state, used bytes, `data_dir`.
-2. `set_storage_slot(by_dev_path="/dev/mmcblk0p8")` (or `by_uuid`).
-3. `configure_storage_quota(dev_path, quota_limit_bytes=-1, quota_rotate=true)`.
-4. `storage_task_submit(action="FREE_UP", dev_path, sync=false)` → poll `storage_task_status(action, dev_path)`. `REMOVE_FILES_OR_DIRECTORIES` also requires `files: [...]`.
-
-### Browse recordings
-
-1. `list_records(path="")` — top of the data dir; relay opens implicitly.
-2. Descend: `list_records(path="YYYY-MM-DD")` (directories are ISO dates).
-3. `fetch_record(path="YYYY-MM-DD/clip_xxx.jpg")`. Videos or files > 5 MB return a direct URL valid for the relay lifetime.
+```text
+reCamera Task Progress
+- [ ] Resolve device (list_devices, then device_name)
+- [ ] Validate JSON (required keys per command)
+- [ ] Ensure prerequisites (storage slot, schedule, model) when configuring rules
+- [ ] Run command; parse stdout or handle stderr
+- [ ] For polling, checkpoint start_unix_ms and rate-limit
+- [ ] On error, surface stderr + one concrete fix
+```
 
 ## Troubleshooting
 
-| Symptom | Fix |
+| Symptom | Likely cause / fix |
 |---|---|
-| HTTP 401 / 403 | Re-copy token from Web Console → Device Info → Connection Settings. |
-| Timeout / connection refused | Verify host, network path, power. `detect_local_device` to probe. |
-| `'device_name' must not be empty` | Pass the registered name; `list_devices` to confirm. |
-| `Invalid token format: expected 'sk_<chars>'` | Token must match `^sk_[A-Za-z0-9_\-]+$`; re-copy from the Web Console. |
-| Empty detection events | Confirm a model is active (`get_detection_model`), the trigger is `inference_set` (`get_record_trigger`), storage is enabled (`get_storage_status`), and `now` is inside the detection schedule (`get_detection_schedule`). |
-| Snapshot fetch 404 | Snapshots rotate; re-fetch events and use a fresh `snapshot_path`. |
-| Schedule rejected | Range format is `Day HH:MM:SS` (e.g. `Mon 08:00:00`); `Day 24:00:00` allowed as end. |
-| `set_detection_model requires 'model_id' or 'model_name'` | Pass exactly one — not both, not neither. |
-| GPIO write rejected | Value must be 0 or 1; confirm `pin_id` via `list_gpios`. |
-| `REMOVE_FILES_OR_DIRECTORIES requires non-empty 'files'` | Populate `files: ["<rel-path>", …]` relative to `data_dir`. |
-| CLI: `ModuleNotFoundError: recamera_intellisense` | Set `PYTHONPATH=scripts` (or run from the skill's `scripts/` directory). |
+| `HTTP 401/403` | Token missing/invalid — re-copy from Web Console; confirm `sk_` prefix. |
+| `Connection refused` / `timed out` | Wrong `host`/`port`/`protocol`; verify LAN reachability and device power. |
+| HTTPS certificate error | Add `"allow_unsecured": true` for self-signed LAN certs (not for the public Internet). |
+| `get_detection_rules` returns `[]` | Current trigger is not `inference_set` — call `set_detection_rules` (or inspect `get_record_trigger`). |
+| Rules set but no events | No storage slot configured (`get_storage_status`); schedule window inactive; `region_filter`/`confidence_range_filter` too tight; `debounce_times` too high. |
+| `fetch_record` returns only `{url, note}` | File is a video or exceeds `max_inline_bytes` (default 5 MiB). Fetch the URL directly or raise the budget. |
+| `storage_task_submit` rejects `sync=true` | `FORMAT`/`FREE_UP` must run async — resubmit with `"sync": false` and poll `storage_task_status`. |
+| `Schedule rejected` | Use `Day HH:MM:SS` with three-letter day; `Day 24:00:00` valid. |
+| `set_detection_model` fails: "not installed" | Run `get_detection_models_info` and use one of the returned names/ids. |
+| `detect_local_device` returns null | No `rcisd` daemon is listening on the Unix socket (default `/dev/shm/rcisd.sock`) within 3 s. Start the daemon or pass a different `socket_path`. |
+| `ImportError: recamera_intellisense` | Set `PYTHONPATH="{baseDir}/scripts"` or `cd {baseDir}/scripts` before `python3 -m recamera_intellisense`. |
+
+## Reference pointers
+
+- **Command schemas at runtime**: `python3 -m recamera_intellisense` (prints every command with required/optional keys).
+- **Per-module sources**: `scripts/recamera_intellisense/{device,detection,model,rule,storage,records,capture,files,gpio,relay}.py` — short, stdlib-only, each file's `COMMAND_SCHEMAS` dict is authoritative.
+- **Credential store**: `~/.recamera/devices.json` (schema matches the Rust `DeviceEntry` in the MCP server; the two surfaces interoperate).

@@ -6,6 +6,7 @@ import base64
 from typing import Any, Dict, List, Optional, Union
 
 from . import _config, _http
+from ._errors import RecameraError
 
 __all__ = [
     "fetch_file",
@@ -16,6 +17,7 @@ __all__ = [
 
 PATH_FILE = "/api/v1/file"
 PATH_EVENTS = "/api/v1/intellisense/events"
+PATH_EVENTS_CLEAR = "/api/v1/intellisense/events/clear"
 _MAX_INLINE_BYTES = 5 * 1024 * 1024
 _IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
@@ -65,13 +67,18 @@ def get_intellisense_events(
     start_unix_ms: Optional[int] = None,
     end_unix_ms: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Fetch raw intellisense events from the daemon event store."""
+    """Fetch raw intellisense events from the daemon event store.
+
+    The daemon accepts ``?start=<ms>&end=<ms>`` (inclusive Unix milliseconds).
+    Callers who want the normalized detection-event shape should use
+    :func:`detection.get_detection_events` instead.
+    """
     dev = _config.resolve(device_name)
     params: Dict[str, Any] = {}
     if start_unix_ms is not None:
-        params["start_unix_ms"] = int(start_unix_ms)
+        params["start"] = int(start_unix_ms)
     if end_unix_ms is not None:
-        params["end_unix_ms"] = int(end_unix_ms)
+        params["end"] = int(end_unix_ms)
     data = _http.get_json(dev, PATH_EVENTS, params=params or None)
     if isinstance(data, list):
         return data
@@ -81,9 +88,19 @@ def get_intellisense_events(
 
 
 def clear_intellisense_events(device_name: str) -> None:
-    """Clear all buffered intellisense events on the daemon."""
+    """Clear all buffered intellisense events on the daemon.
+
+    Calls ``POST /api/v1/intellisense/events/clear`` (the daemon does not
+    support ``DELETE`` on the events collection).
+    """
     dev = _config.resolve(device_name)
-    _http.delete(dev, PATH_EVENTS)
+    resp = _http.post_json(dev, PATH_EVENTS_CLEAR)
+    if isinstance(resp, dict):
+        status = str(resp.get("status", "")).lower()
+        if status and status != "ok":
+            raise RecameraError(
+                f"clear intellisense events failed: {resp.get('message', status)!r}"
+            )
 
 
 COMMANDS = {
