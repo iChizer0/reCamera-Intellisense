@@ -89,7 +89,7 @@ pub async fn control_config(
     quota_rotate: bool,
 ) -> Result<()> {
     let payload = json!({
-        "sTaskType": "SYNC",
+        "sTask": "SYNC",
         "sAction": "CONFIG",
         "sSlotDevPath": dev_path,
         "dSlotConfig": {
@@ -138,7 +138,7 @@ async fn relay_call(
     dev_path: &str,
 ) -> Result<Value> {
     let payload = json!({
-        "sTaskType": "SYNC",
+        "sTask": "SYNC",
         "sAction": action,
         "sSlotDevPath": dev_path,
     });
@@ -179,7 +179,7 @@ pub async fn control_sync(
     let action = normalize_storage_action(action)
         .with_context(|| format!("unknown storage action '{action}'"))?;
     let mut payload = json!({
-        "sTaskType": "SYNC",
+        "sTask": "SYNC",
         "sAction": action,
         "sSlotDevPath": dev_path,
     });
@@ -206,7 +206,7 @@ pub async fn control_async_submit(
     let action = normalize_storage_action(action)
         .with_context(|| format!("unknown storage action '{action}'"))?;
     let mut payload = json!({
-        "sTaskType": "ASYNC_SUBMIT",
+        "sTask": "ASYNC_SUBMIT",
         "sAction": action,
         "sSlotDevPath": dev_path,
     });
@@ -228,14 +228,18 @@ pub async fn control_async_status(
     device: &DeviceRecord,
     action: &str,
     dev_path: &str,
+    task_uid: Option<&str>,
 ) -> Result<StorageTaskHistory> {
     let action = normalize_storage_action(action)
         .with_context(|| format!("unknown storage action '{action}'"))?;
-    let payload = json!({
-        "sTaskType": "ASYNC_STATUS",
+    let mut payload = json!({
+        "sTask": "ASYNC_STATUS",
         "sAction": action,
         "sSlotDevPath": dev_path,
     });
+    if let Some(uid) = task_uid {
+        payload["sTaskUID"] = json!(uid);
+    }
     let resp = client
         .post_json(device, PATH_CONTROL, None, Some(&payload))
         .await?;
@@ -248,14 +252,18 @@ pub async fn control_async_cancel(
     device: &DeviceRecord,
     action: &str,
     dev_path: &str,
+    task_uid: Option<&str>,
 ) -> Result<StorageTaskHistory> {
     let action = normalize_storage_action(action)
         .with_context(|| format!("unknown storage action '{action}'"))?;
-    let payload = json!({
-        "sTaskType": "ASYNC_CANCEL",
+    let mut payload = json!({
+        "sTask": "ASYNC_CANCEL",
         "sAction": action,
         "sSlotDevPath": dev_path,
     });
+    if let Some(uid) = task_uid {
+        payload["sTaskUID"] = json!(uid);
+    }
     let resp = client
         .post_json(device, PATH_CONTROL, None, Some(&payload))
         .await?;

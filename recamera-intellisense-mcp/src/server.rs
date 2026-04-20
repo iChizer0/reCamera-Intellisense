@@ -597,7 +597,8 @@ impl ReCameraServer {
                 &self.client,
                 &device,
                 &params.action,
-                &params.dev_path
+                &params.dev_path,
+                params.task_uid.as_deref(),
             )
             .await
         );
@@ -616,7 +617,8 @@ impl ReCameraServer {
                 &self.client,
                 &device,
                 &params.action,
-                &params.dev_path
+                &params.dev_path,
+                params.task_uid.as_deref(),
             )
             .await
         );

@@ -452,6 +452,9 @@ pub struct StorageTaskQueryParams {
     /// Action family.
     pub action: String,
     pub dev_path: String,
+    /// Optional async task UID to target a specific history entry.
+    #[serde(default)]
+    pub task_uid: Option<String>,
 }
 
 // MARK: MCP params - records

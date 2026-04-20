@@ -28,7 +28,7 @@ def _relay_call(device, action: str, dev_path: str) -> Dict[str, Any]:
     resp = _http.post_json(
         device,
         PATH_CONTROL,
-        payload={"sTaskType": "SYNC", "sAction": action, "sSlotDevPath": dev_path},
+        payload={"sTask": "SYNC", "sAction": action, "sSlotDevPath": dev_path},
     )
     _http.expect_ok(resp, f"storage control {action}")
     return resp if isinstance(resp, dict) else {}
@@ -86,7 +86,7 @@ def close_relay(device_name: str, *, dev_path: Optional[str] = None) -> None:
     resp = _http.post_json(
         dev,
         PATH_CONTROL,
-        payload={"sTaskType": "SYNC", "sAction": "UNRELAY", "sSlotDevPath": resolved},
+        payload={"sTask": "SYNC", "sAction": "UNRELAY", "sSlotDevPath": resolved},
     )
     _http.expect_ok(resp, "close relay")
     _cache_evict(device_name, resolved)

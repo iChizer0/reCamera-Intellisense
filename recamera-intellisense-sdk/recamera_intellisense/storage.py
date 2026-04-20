@@ -119,7 +119,7 @@ def configure_storage_quota(
     """Set per-slot quota. ``quota_limit_bytes = -1`` means no limit."""
     dev = _config.resolve(device_name)
     payload = {
-        "sTaskType": "SYNC",
+        "sTask": "SYNC",
         "sAction": "CONFIG",
         "sSlotDevPath": dev_path,
         "dSlotConfig": {
@@ -136,10 +136,11 @@ def _task_payload(
     action: str,
     dev_path: str,
     files: Optional[List[str]] = None,
+    task_uid: Optional[str] = None,
 ) -> Dict[str, Any]:
     action = normalize_action(action)
     payload: Dict[str, Any] = {
-        "sTaskType": task_type,
+        "sTask": task_type,
         "sAction": action,
         "sSlotDevPath": dev_path,
     }
@@ -147,6 +148,8 @@ def _task_payload(
         if not files:
             raise ValueError("REMOVE_FILES_OR_DIRECTORIES requires non-empty 'files'.")
         payload["lFilesOrDirectoriesToRemove"] = list(files)
+    if task_uid:
+        payload["sTaskUID"] = task_uid
     return payload
 
 
@@ -171,10 +174,11 @@ def storage_task_status(
     *,
     action: str,
     dev_path: str,
+    task_uid: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Query the status of the last async task for (*action*, *dev_path*)."""
     dev = _config.resolve(device_name)
-    payload = _task_payload("ASYNC_STATUS", action, dev_path)
+    payload = _task_payload("ASYNC_STATUS", action, dev_path, task_uid=task_uid)
     resp = _http.post_json(dev, PATH_CONTROL, payload=payload)
     _http.expect_ok(resp, f"storage task status {payload['sAction']}")
     return resp if isinstance(resp, dict) else {}
@@ -185,10 +189,11 @@ def storage_task_cancel(
     *,
     action: str,
     dev_path: str,
+    task_uid: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Cancel an in-flight async task."""
     dev = _config.resolve(device_name)
-    payload = _task_payload("ASYNC_CANCEL", action, dev_path)
+    payload = _task_payload("ASYNC_CANCEL", action, dev_path, task_uid=task_uid)
     resp = _http.post_json(dev, PATH_CONTROL, payload=payload)
     _http.expect_ok(resp, f"storage task cancel {payload['sAction']}")
     return resp if isinstance(resp, dict) else {}
@@ -263,10 +268,10 @@ COMMAND_SCHEMAS = {
     },
     "storage_task_status": {
         "required": {"device_name", "action", "dev_path"},
-        "optional": set(),
+        "optional": {"task_uid"},
     },
     "storage_task_cancel": {
         "required": {"device_name", "action", "dev_path"},
-        "optional": set(),
+        "optional": {"task_uid"},
     },
 }
