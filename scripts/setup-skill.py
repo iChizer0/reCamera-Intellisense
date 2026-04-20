@@ -6,7 +6,7 @@ Features:
 - local-checkout installs without network access
 - standalone installs from GitHub release source archives
 - safe staged replacement with rollback on failure
-- destination discovery for workspace, Claude Code, and Claw-style roots
+- destination discovery for workspace, Claude Code, Claw-style, and Nanobot roots
 
 Examples:
     python3 setup-skill.py
@@ -41,7 +41,15 @@ DEFAULT_BRANCH = "main"
 API_TIMEOUT = 30
 DOWNLOAD_TIMEOUT = 180
 CHUNK_SIZE = 64 * 1024
-CONFIG_DIR_NAMES = {".claude", ".openclaw", ".claw", "claude", "openclaw", "claw"}
+FLAT_CONFIG_DIR_NAMES = {
+    ".claude",
+    ".openclaw",
+    ".claw",
+    "claude",
+    "openclaw",
+    "claw",
+}
+NANOBOT_CONFIG_PREFIXES = (".nanobot", "nanobot")
 WORKSPACE_MARKERS = (".git", "pyproject.toml", "package.json", "Cargo.toml", "go.mod")
 IGNORE_NAMES = {".git", "__pycache__", ".DS_Store"}
 SKILL_REL = PurePosixPath("skills") / SKILL_NAME
@@ -256,7 +264,10 @@ def inspect_skill(skill_dir: Path) -> tuple[bool, str | None]:
     package_dir = skill_dir / "scripts" / "recamera_intellisense"
     if not skill_md.is_file():
         return False, f"Missing {skill_md}"
-    if not (package_dir / "__main__.py").is_file() or not (package_dir / "__init__.py").is_file():
+    if (
+        not (package_dir / "__main__.py").is_file()
+        or not (package_dir / "__init__.py").is_file()
+    ):
         return False, f"Missing bundled package under {package_dir}"
     name = _read_skill_name(skill_md)
     if name and name != SKILL_NAME:
@@ -291,9 +302,14 @@ def detect_local_source() -> LocalSource | None:
     if not (skill_dir / "SKILL.md").is_file():
         skill_dir = repo_root / "scripts" / "skills" / SKILL_NAME
     package_dir = repo_root / "recamera-intellisense-sdk" / "recamera_intellisense"
-    if not (skill_dir / "SKILL.md").is_file() or not (package_dir / "__main__.py").is_file():
+    if (
+        not (skill_dir / "SKILL.md").is_file()
+        or not (package_dir / "__main__.py").is_file()
+    ):
         return None
-    return LocalSource(repo_root=repo_root, skill_dir=skill_dir, package_dir=package_dir)
+    return LocalSource(
+        repo_root=repo_root, skill_dir=skill_dir, package_dir=package_dir
+    )
 
 
 def _github_get(url: str, timeout: int) -> dict:
@@ -326,9 +342,13 @@ def _github_get(url: str, timeout: int) -> dict:
 def fetch_release(tag: str | None) -> dict:
     if tag:
         Ui.step(f"Fetching release {Ui.bold(tag)} from GitHub…")
-        return _github_get(f"https://api.github.com/repos/{REPO}/releases/tags/{tag}", API_TIMEOUT)
+        return _github_get(
+            f"https://api.github.com/repos/{REPO}/releases/tags/{tag}", API_TIMEOUT
+        )
     Ui.step("Fetching latest release from GitHub…")
-    return _github_get(f"https://api.github.com/repos/{REPO}/releases/latest", API_TIMEOUT)
+    return _github_get(
+        f"https://api.github.com/repos/{REPO}/releases/latest", API_TIMEOUT
+    )
 
 
 def _codeload_tag_url(tag: str) -> str:
@@ -386,7 +406,12 @@ def _wanted(rel: PurePosixPath) -> bool:
     text = rel.as_posix()
     skill_root = SKILL_REL.as_posix()
     pkg_root = PKG_REL.as_posix()
-    return text == skill_root or text.startswith(skill_root + "/") or text == pkg_root or text.startswith(pkg_root + "/")
+    return (
+        text == skill_root
+        or text.startswith(skill_root + "/")
+        or text == pkg_root
+        or text.startswith(pkg_root + "/")
+    )
 
 
 def _extract_source_tree(archive: Path, dest_root: Path) -> tuple[Path, Path]:
@@ -408,7 +433,10 @@ def _extract_source_tree(archive: Path, dest_root: Path) -> tuple[Path, Path]:
         raise SetupError("Source archive did not contain the expected skill files.")
     skill_src = dest_root / Path(*SKILL_REL.parts)
     pkg_src = dest_root / Path(*PKG_REL.parts)
-    if not (skill_src / "SKILL.md").is_file() or not (pkg_src / "__main__.py").is_file():
+    if (
+        not (skill_src / "SKILL.md").is_file()
+        or not (pkg_src / "__main__.py").is_file()
+    ):
         raise SetupError("Downloaded archive was missing required skill files.")
     return skill_src, pkg_src
 
@@ -423,7 +451,9 @@ def _prepare_release_bundle(temp_root: Path, version: str | None) -> BundleSourc
         try:
             release = fetch_release(None)
         except SetupError as exc:
-            Ui.warn("Could not resolve the latest release; falling back to the main branch source archive.")
+            Ui.warn(
+                "Could not resolve the latest release; falling back to the main branch source archive."
+            )
             if exc.hint:
                 Ui.hint(exc.hint)
             label = f"GitHub branch {DEFAULT_BRANCH}"
@@ -451,21 +481,50 @@ def source_bundle(version: str | None, force_download: bool) -> Iterator[BundleS
             bundle_dir = temp_root / SKILL_NAME
             Ui.step("Using local checkout sources…")
             _copy_bundle(local.skill_dir, local.package_dir, bundle_dir)
-            yield BundleSource(label=f"local checkout ({local.repo_root})", bundle_dir=bundle_dir)
+            yield BundleSource(
+                label=f"local checkout ({local.repo_root})", bundle_dir=bundle_dir
+            )
         else:
             yield _prepare_release_bundle(temp_root, version)
 
 
-def _looks_like_config_dir(path: Path) -> bool:
+def _looks_like_flat_config_dir(path: Path) -> bool:
     name = path.name.lower()
-    return name in CONFIG_DIR_NAMES or (name.startswith(".") and "claw" in name)
+    return name in FLAT_CONFIG_DIR_NAMES or (name.startswith(".") and "claw" in name)
+
+
+def _looks_like_nanobot_config_dir(path: Path) -> bool:
+    name = path.name.lower()
+    return any(
+        name == prefix or name.startswith(prefix + "-")
+        for prefix in NANOBOT_CONFIG_PREFIXES
+    )
+
+
+def _looks_like_nanobot_workspace_dir(path: Path) -> bool:
+    return path.name.lower() == "workspace" and (
+        _looks_like_nanobot_config_dir(path.parent)
+        or (path.parent / "config.json").exists()
+    )
+
+
+def _looks_like_nanobot_config_file(path: Path) -> bool:
+    return path.name.lower() == "config.json" and _looks_like_nanobot_config_dir(
+        path.parent
+    )
 
 
 def normalise_anchor(raw: str | Path) -> Path:
     path = Path(raw).expanduser()
+    if _looks_like_nanobot_config_file(path):
+        return path.parent / "workspace"
     if path.name == "skills":
         return path.parent
-    if _looks_like_config_dir(path):
+    if _looks_like_nanobot_workspace_dir(path):
+        return path
+    if _looks_like_nanobot_config_dir(path):
+        return path / "workspace"
+    if _looks_like_flat_config_dir(path):
         return path
     return path / ".claude"
 
@@ -490,7 +549,9 @@ def _candidate(anchor: Path, label: str, reason: str, recommended: bool) -> Cand
     return candidate_from_paths(_paths(anchor), label, reason, recommended)
 
 
-def candidate_from_paths(paths: Paths, label: str, reason: str, recommended: bool) -> Candidate:
+def candidate_from_paths(
+    paths: Paths, label: str, reason: str, recommended: bool
+) -> Candidate:
     installed, problem = inspect_skill(paths.skill_dir)
     if installed:
         state = "installed"
@@ -500,7 +561,14 @@ def candidate_from_paths(paths: Paths, label: str, reason: str, recommended: boo
         state = "available"
     else:
         state = "new"
-    return Candidate(label=label, reason=reason, recommended=recommended, paths=paths, state=state, problem=problem)
+    return Candidate(
+        label=label,
+        reason=reason,
+        recommended=recommended,
+        paths=paths,
+        state=state,
+        problem=problem,
+    )
 
 
 def detect_workspace_root(start: Path) -> Path:
@@ -517,6 +585,8 @@ def discover_destinations(cwd: Path) -> list[Candidate]:
     workspace_root = detect_workspace_root(cwd)
     home = Path.home()
     xdg_home = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")).expanduser()
+    workspace_nanobot = workspace_root / ".nanobot" / "workspace"
+    home_nanobot = home / ".nanobot" / "workspace"
     raw_entries: list[tuple[Path, str, str]] = []
     seen: set[Path] = set()
 
@@ -527,21 +597,56 @@ def discover_destinations(cwd: Path) -> list[Candidate]:
         seen.add(resolved)
         raw_entries.append((resolved, label, reason))
 
-    workspace_existing = [workspace_root / name for name in (".openclaw", ".claw", ".claude") if (workspace_root / name).exists()]
+    workspace_existing: list[tuple[Path, str, str]] = []
+    for name in (".openclaw", ".claw", ".claude"):
+        anchor = workspace_root / name
+        if anchor.exists():
+            workspace_existing.append(
+                (anchor, f"workspace ({anchor.name})", "existing workspace skill root")
+            )
+    if workspace_nanobot.exists():
+        workspace_existing.append(
+            (
+                workspace_nanobot,
+                "workspace (.nanobot/workspace)",
+                "existing workspace nanobot workspace",
+            )
+        )
     if workspace_existing:
-        for anchor in workspace_existing:
-            add(anchor, f"workspace ({anchor.name})", "existing workspace skill root")
+        for anchor, label, reason in workspace_existing:
+            add(anchor, label, reason)
     else:
-        add(workspace_root / ".claude", "workspace (.claude)", "recommended project-local skill root")
-    add(workspace_root / ".openclaw", "workspace (.openclaw)", "project-local OpenClaw-style root")
+        add(
+            workspace_root / ".claude",
+            "workspace (.claude)",
+            "recommended project-local skill root",
+        )
+    add(
+        workspace_root / ".openclaw",
+        "workspace (.openclaw)",
+        "project-local OpenClaw-style root",
+    )
     add(workspace_root / ".claw", "workspace (.claw)", "project-local Claw-style root")
+    add(
+        workspace_nanobot,
+        "workspace (.nanobot/workspace)",
+        "project-local nanobot workspace",
+    )
     add(home / ".claude", "personal (~/.claude)", "personal Claude Code skill root")
     add(home / ".openclaw", "personal (~/.openclaw)", "personal OpenClaw-style root")
     add(home / ".claw", "personal (~/.claw)", "personal Claw-style root")
+    add(home_nanobot, "personal (~/.nanobot/workspace)", "personal nanobot workspace")
     add(xdg_home / "claude", f"XDG ({xdg_home.name}/claude)", "XDG-style Claude root")
-    add(xdg_home / "openclaw", f"XDG ({xdg_home.name}/openclaw)", "XDG-style OpenClaw root")
+    add(
+        xdg_home / "openclaw",
+        f"XDG ({xdg_home.name}/openclaw)",
+        "XDG-style OpenClaw root",
+    )
     add(xdg_home / "claw", f"XDG ({xdg_home.name}/claw)", "XDG-style Claw root")
-    return [_candidate(anchor, label, reason, index == 0) for index, (anchor, label, reason) in enumerate(raw_entries)]
+    return [
+        _candidate(anchor, label, reason, index == 0)
+        for index, (anchor, label, reason) in enumerate(raw_entries)
+    ]
 
 
 def _format_state(state: str) -> str:
@@ -553,7 +658,11 @@ def _format_state(state: str) -> str:
 
 
 def _format_candidate(candidate: Candidate) -> str:
-    parts = [candidate.label, str(candidate.paths.anchor), f"[{_format_state(candidate.state)}]"]
+    parts = [
+        candidate.label,
+        str(candidate.paths.anchor),
+        f"[{_format_state(candidate.state)}]",
+    ]
     if candidate.recommended:
         parts.append(Ui.green("recommended"))
     return " — ".join(parts)
@@ -566,7 +675,9 @@ def choose_destination(candidates: Sequence[Candidate]) -> Candidate:
         chosen = candidates[0]
         Ui.info(f"Destination: {Ui.cyan(str(chosen.paths.skill_dir))}")
         return chosen
-    index = Ui.ask_choice("Choose where to install the skill:", [_format_candidate(c) for c in candidates])
+    index = Ui.ask_choice(
+        "Choose where to install the skill:", [_format_candidate(c) for c in candidates]
+    )
     chosen = candidates[index]
     Ui.info(f"Selected: {Ui.cyan(str(chosen.paths.skill_dir))}")
     return chosen
@@ -611,28 +722,40 @@ def prune_empty(paths: Sequence[Path]) -> None:
 def _warn_python3() -> None:
     if shutil.which("python3") is None:
         Ui.warn("`python3` is not on PATH.")
-        Ui.hint("The skill manifest expects `python3` for bundled scripts. Install Python 3 or adjust your host environment before using the skill.")
+        Ui.hint(
+            "The skill manifest expects `python3` for bundled scripts. Install Python 3 or adjust your host environment before using the skill."
+        )
 
 
 def do_install(args: argparse.Namespace) -> int:
     Ui.rule("reCamera Intellisense Skill — install")
     _warn_python3()
-    destination = candidate_from_paths(
-        explicit_paths(args.path),
-        "custom path",
-        f"resolved from {args.path}",
-        True,
-    ) if args.path else choose_destination(discover_destinations(Path.cwd()))
+    destination = (
+        candidate_from_paths(
+            explicit_paths(args.path),
+            "custom path",
+            f"resolved from {args.path}",
+            True,
+        )
+        if args.path
+        else choose_destination(discover_destinations(Path.cwd()))
+    )
     anchor_missing = not destination.paths.anchor.exists()
     skills_missing = not destination.paths.skills_dir.exists()
     if destination.state in {"installed", "incomplete"}:
         if destination.state == "installed":
-            Ui.info(f"Skill already present: {Ui.cyan(str(destination.paths.skill_dir))}")
+            Ui.info(
+                f"Skill already present: {Ui.cyan(str(destination.paths.skill_dir))}"
+            )
         else:
-            Ui.warn(f"Existing skill directory looks incomplete: {Ui.cyan(str(destination.paths.skill_dir))}")
+            Ui.warn(
+                f"Existing skill directory looks incomplete: {Ui.cyan(str(destination.paths.skill_dir))}"
+            )
             if destination.problem:
                 Ui.hint(destination.problem)
-        if not args.force and not Ui.ask_yes_no("Replace the existing skill?", default=False):
+        if not args.force and not Ui.ask_yes_no(
+            "Replace the existing skill?", default=False
+        ):
             Ui.info("Install skipped.")
             if destination.state == "installed":
                 print(f"SKILL_PATH={destination.paths.skill_dir}")
@@ -647,7 +770,9 @@ def do_install(args: argparse.Namespace) -> int:
     print(f"  Status:  {Ui.green('updated' if replaced else 'installed')}")
     if anchor_missing or skills_missing:
         print()
-        Ui.warn("If your assistant is already running, you may need to restart or reload it so it notices the new skills directory.")
+        Ui.warn(
+            "If your assistant is already running, you may need to restart or reload it so it notices the new skills directory."
+        )
     print()
     print(f"SKILL_PATH={destination.paths.skill_dir}")
     return 0
@@ -655,7 +780,9 @@ def do_install(args: argparse.Namespace) -> int:
 
 def do_check(args: argparse.Namespace) -> int:
     if args.path:
-        candidate = candidate_from_paths(explicit_paths(args.path), "custom path", "explicit check", True)
+        candidate = candidate_from_paths(
+            explicit_paths(args.path), "custom path", "explicit check", True
+        )
         if candidate.state == "installed":
             print(candidate.paths.skill_dir)
             return 0
@@ -669,9 +796,15 @@ def do_check(args: argparse.Namespace) -> int:
 
 def _uninstall_targets(args: argparse.Namespace) -> list[Candidate]:
     if args.path:
-        candidate = candidate_from_paths(explicit_paths(args.path), "custom path", "explicit uninstall", True)
+        candidate = candidate_from_paths(
+            explicit_paths(args.path), "custom path", "explicit uninstall", True
+        )
         return [candidate] if candidate.state in {"installed", "incomplete"} else []
-    return [candidate for candidate in discover_destinations(Path.cwd()) if candidate.state in {"installed", "incomplete"}]
+    return [
+        candidate
+        for candidate in discover_destinations(Path.cwd())
+        if candidate.state in {"installed", "incomplete"}
+    ]
 
 
 def do_uninstall(args: argparse.Namespace) -> int:
@@ -724,36 +857,82 @@ def build_parser() -> argparse.ArgumentParser:
             "  setup-skill.py install\n"
             "  setup-skill.py install -y\n"
             "  setup-skill.py install --path ~/.openclaw\n"
+            "  setup-skill.py install --path ~/.nanobot\n"
             "  setup-skill.py install --version v2.0.0\n"
             "  setup-skill.py check\n"
             "  setup-skill.py uninstall -y\n"
             "  setup-skill.py list-destinations\n"
         ),
     )
-    parser.add_argument("--no-colour", "--no-color", dest="no_colour", action="store_true", help="Disable ANSI colour output (same as NO_COLOR=1).")
+    parser.add_argument(
+        "--no-colour",
+        "--no-color",
+        dest="no_colour",
+        action="store_true",
+        help="Disable ANSI colour output (same as NO_COLOR=1).",
+    )
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     def add_yes(p: argparse.ArgumentParser) -> None:
-        p.add_argument("-y", "--yes", action="store_true", help="Non-interactive mode: accept default prompts.")
+        p.add_argument(
+            "-y",
+            "--yes",
+            action="store_true",
+            help="Non-interactive mode: accept default prompts.",
+        )
 
-    install_p = sub.add_parser("install", help="Install the skill into a detected or specified skills directory.")
-    install_p.add_argument("--path", metavar="DIR", help="Destination root, a config root like ~/.claude, a skills directory, or the final skill directory.")
-    install_p.add_argument("--version", metavar="TAG", help="Install from a specific GitHub release tag instead of the default source.")
-    install_p.add_argument("--force-download", action="store_true", help="Download release sources even when a local checkout is available.")
-    install_p.add_argument("--force", action="store_true", help="Replace an existing skill directory without prompting.")
+    install_p = sub.add_parser(
+        "install",
+        help="Install the skill into a detected or specified skills directory.",
+    )
+    install_p.add_argument(
+        "--path",
+        metavar="DIR",
+        help="Destination root, for example ~/.claude, ~/.openclaw, ~/.nanobot, a skills directory, or the final skill directory.",
+    )
+    install_p.add_argument(
+        "--version",
+        metavar="TAG",
+        help="Install from a specific GitHub release tag instead of the default source.",
+    )
+    install_p.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Download release sources even when a local checkout is available.",
+    )
+    install_p.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace an existing skill directory without prompting.",
+    )
     add_yes(install_p)
     install_p.set_defaults(func=do_install)
 
-    check_p = sub.add_parser("check", help="Print the installed skill path and exit 0, else exit 1.")
-    check_p.add_argument("--path", metavar="DIR", help="Check only the specified destination root or skill directory.")
+    check_p = sub.add_parser(
+        "check", help="Print the installed skill path and exit 0, else exit 1."
+    )
+    check_p.add_argument(
+        "--path",
+        metavar="DIR",
+        help="Check only the specified destination root or skill directory (for example ~/.nanobot or ~/.nanobot/workspace).",
+    )
     check_p.set_defaults(func=do_check)
 
-    uninstall_p = sub.add_parser("uninstall", help="Remove the installed skill from one or more destinations.")
-    uninstall_p.add_argument("--path", metavar="DIR", help="Remove only the specified destination root or skill directory.")
+    uninstall_p = sub.add_parser(
+        "uninstall", help="Remove the installed skill from one or more destinations."
+    )
+    uninstall_p.add_argument(
+        "--path",
+        metavar="DIR",
+        help="Remove only the specified destination root or skill directory (for example ~/.nanobot or ~/.nanobot/workspace).",
+    )
     add_yes(uninstall_p)
     uninstall_p.set_defaults(func=do_uninstall)
 
-    list_p = sub.add_parser("list-destinations", help="List candidate install destinations and their status.")
+    list_p = sub.add_parser(
+        "list-destinations",
+        help="List candidate install destinations and their status.",
+    )
     list_p.set_defaults(func=do_list_destinations)
     return parser
 
@@ -764,7 +943,9 @@ SUBCOMMANDS = {"install", "check", "uninstall", "list-destinations"}
 def normalise_argv(argv: list[str]) -> list[str]:
     if "--check" in argv:
         return ["check", *[arg for arg in argv if arg != "--check"]]
-    has_subcommand = any((not arg.startswith("-")) and arg in SUBCOMMANDS for arg in argv)
+    has_subcommand = any(
+        (not arg.startswith("-")) and arg in SUBCOMMANDS for arg in argv
+    )
     if not has_subcommand and not any(arg in {"-h", "--help"} for arg in argv):
         return ["install", *argv]
     return argv

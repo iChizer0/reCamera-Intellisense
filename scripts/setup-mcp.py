@@ -317,7 +317,9 @@ def download_file(url: str, dest: Path) -> None:
         raise SetupError(f"Download failed: {e}") from None
 
 
-def _fetch_text(url: str, *, timeout: int = HTTP_TIMEOUT_API, max_bytes: int = 1 << 20) -> str:
+def _fetch_text(
+    url: str, *, timeout: int = HTTP_TIMEOUT_API, max_bytes: int = 1 << 20
+) -> str:
     """Download a small text asset (checksums file). Hard cap to prevent
     unexpectedly huge payloads from exhausting memory."""
     try:
@@ -865,9 +867,10 @@ def do_install(args: argparse.Namespace) -> int:
     install_dir = Path(args.dir).expanduser().resolve()
     Ui.rule("reCamera Intellisense MCP Server — install")
 
-    skip_checksum = bool(getattr(args, "skip_checksum", False)) or os.environ.get(
-        "RECAMERA_SKIP_CHECKSUM"
-    ) == "1"
+    skip_checksum = (
+        bool(getattr(args, "skip_checksum", False))
+        or os.environ.get("RECAMERA_SKIP_CHECKSUM") == "1"
+    )
     if skip_checksum:
         Ui.warn(
             "Checksum verification DISABLED — binary integrity will not be "

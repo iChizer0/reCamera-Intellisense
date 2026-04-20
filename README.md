@@ -30,4 +30,4 @@ npx clawhub@latest install recamera-intellisense
 curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-skill.py | python3
 ```
 
-The installer will prompt you to choose an installation directory (current workspace, a detected Claw directory, or a custom path).
+The installer will prompt you to choose an installation directory (current workspace, detected Claude / Claw roots, detected Nanobot workspaces, or a custom path such as `~/.nanobot`).
