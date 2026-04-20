@@ -24,6 +24,7 @@ Zero third-party dependencies — standard library only.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -39,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -59,6 +61,13 @@ PLATFORM_MAP: dict[tuple[str, str], str] = {
 HTTP_TIMEOUT_API = 30
 HTTP_TIMEOUT_DOWNLOAD = 180
 CHUNK_SIZE = 64 * 1024
+MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
+NETWORK_HINT = (
+    "Check your internet connection and proxy environment variables "
+    "(HTTP_PROXY, HTTPS_PROXY, NO_PROXY)."
+)
+
+KNOWN_SUBCOMMANDS: set[str] = set()
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -74,15 +83,17 @@ def _use_colour() -> bool:
     return sys.stdout.isatty()
 
 
+_COLOUR = _use_colour()
+
+
 class Ui:
     """Tiny ANSI-only presentation helper. All output goes through here."""
 
-    colour = _use_colour()
     auto_yes = False  # populated from CLI args
 
     @classmethod
     def _wrap(cls, code: str, text: str) -> str:
-        return f"\033[{code}m{text}\033[0m" if cls.colour else text
+        return f"\033[{code}m{text}\033[0m" if _COLOUR else text
 
     @classmethod
     def bold(cls, t: str) -> str:
@@ -118,7 +129,7 @@ class Ui:
 
     @classmethod
     def warn(cls, msg: str) -> None:
-        print(f" {cls.yellow('!')} {msg}")
+        print(f" {cls.yellow('!')} {msg}", file=sys.stderr)
 
     @classmethod
     def error(cls, msg: str) -> None:
@@ -194,7 +205,14 @@ def detect_platform() -> PlatformTarget:
         supported = "\n    ".join(f"{s} {m}" for (s, m) in PLATFORM_MAP)
         raise SetupError(
             f"Unsupported platform: {system} {machine}",
-            hint=f"Supported targets:\n    {supported}",
+            hint=(
+                f"Supported targets:\n    {supported}\n\n"
+                "CLI fallback (Python transport):\n"
+                "    PYTHONPATH=scripts python3 -m recamera_intellisense "
+                "list-commands\n"
+                "If you need this target, please open an issue in the "
+                "repository."
+            ),
         )
     ext = ".zip" if system == "Windows" else ".tar.gz"
     Ui.info(f"Platform: {Ui.bold(f'{system} {machine}')}")
@@ -225,15 +243,16 @@ def _github_get(url: str, *, timeout: int) -> dict:
     except URLError as e:
         raise SetupError(
             f"Network error contacting GitHub: {e.reason}",
-            hint="Check your internet connection and any HTTP_PROXY settings.",
+            hint=NETWORK_HINT,
         ) from None
 
 
 def fetch_release(version: str | None) -> dict:
     if version:
         Ui.step(f"Fetching release {Ui.bold(version)} from GitHub…")
+        encoded_version = quote(version, safe="")
         return _github_get(
-            f"https://api.github.com/repos/{REPO}/releases/tags/{version}",
+            f"https://api.github.com/repos/{REPO}/releases/tags/{encoded_version}",
             timeout=HTTP_TIMEOUT_API,
         )
     Ui.step("Fetching latest release from GitHub…")
@@ -289,9 +308,18 @@ def _format_mb(n: int) -> str:
 def download_file(url: str, dest: Path) -> None:
     show_progress = sys.stdout.isatty()
     try:
-        with urlopen(Request(url), timeout=HTTP_TIMEOUT_DOWNLOAD) as resp:
+        request = Request(url, headers={"User-Agent": f"setup-mcp.py/{REPO}"})
+        with urlopen(request, timeout=HTTP_TIMEOUT_DOWNLOAD) as resp:
             total_hdr = resp.headers.get("Content-Length")
             total = int(total_hdr) if total_hdr else 0
+            if total > MAX_DOWNLOAD_BYTES:
+                raise SetupError(
+                    "Release asset is too large to download safely.",
+                    hint=(
+                        f"Asset size {_format_mb(total)} exceeds limit "
+                        f"{_format_mb(MAX_DOWNLOAD_BYTES)}."
+                    ),
+                )
             received = 0
             last_pct = -1
             with open(dest, "wb") as f:
@@ -301,6 +329,14 @@ def download_file(url: str, dest: Path) -> None:
                         break
                     f.write(chunk)
                     received += len(chunk)
+                    if received > MAX_DOWNLOAD_BYTES:
+                        raise SetupError(
+                            "Release asset exceeded maximum download size.",
+                            hint=(
+                                f"Received {_format_mb(received)} which exceeds "
+                                f"limit {_format_mb(MAX_DOWNLOAD_BYTES)}."
+                            ),
+                        )
                     if show_progress and total:
                         pct = received * 100 // total
                         if pct != last_pct:
@@ -313,8 +349,15 @@ def download_file(url: str, dest: Path) -> None:
                             )
             if show_progress:
                 print()
+    except SetupError:
+        if dest.exists():
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+        raise
     except (HTTPError, URLError) as e:
-        raise SetupError(f"Download failed: {e}") from None
+        raise SetupError(f"Download failed: {e}", hint=NETWORK_HINT) from None
 
 
 def _fetch_text(
@@ -326,7 +369,10 @@ def _fetch_text(
         with urlopen(Request(url), timeout=timeout) as resp:
             data = resp.read(max_bytes + 1)
     except (HTTPError, URLError) as e:
-        raise SetupError(f"Failed to download checksum asset: {e}") from None
+        raise SetupError(
+            f"Failed to download checksum asset: {e}",
+            hint=NETWORK_HINT,
+        ) from None
     if len(data) > max_bytes:
         raise SetupError("Checksum asset exceeds 1 MiB — refusing to parse.")
     return data.decode("utf-8", errors="replace")
@@ -341,10 +387,11 @@ def _parse_checksum(text: str, asset_name: str) -> str | None:
     stripped = text.strip()
     # Bare digest (``<asset>.sha256`` convention: a single 64-char hex token).
     tokens = stripped.split()
-    if len(tokens) == 1 and len(tokens[0]) == 64:
+    first_token = tokens[0].lstrip("\ufeff") if tokens else ""
+    if len(tokens) == 1 and len(first_token) == 64:
         try:
-            int(tokens[0], 16)
-            return tokens[0].lower()
+            int(first_token, 16)
+            return first_token.lower()
         except ValueError:
             pass
     for line in text.splitlines():
@@ -354,7 +401,7 @@ def _parse_checksum(text: str, asset_name: str) -> str | None:
         parts = line.split()
         if len(parts) < 2:
             continue
-        digest = parts[0].lstrip("*").lower()
+        digest = parts[0].lstrip("\ufeff").lstrip("*").lower()
         # sha256sum uses ``*name`` for binary mode, ``name`` for text.
         name = parts[-1].lstrip("*")
         if len(digest) == 64 and name == asset_name:
@@ -449,6 +496,8 @@ def _safe_tar_member(tar: tarfile.TarFile, wanted: str) -> tarfile.TarInfo:
     for m in tar.getmembers():
         if Path(m.name).name != wanted:
             continue
+        # Dual traversal guard: reject absolute/.. prefixes AND any embedded
+        # parent-segment in normalized path parts.
         parts = Path(m.name).parts
         if m.name.startswith(("/", "..")) or ".." in parts:
             continue
@@ -464,6 +513,8 @@ def _safe_zip_name(zf: zipfile.ZipFile, wanted: str) -> str:
     for n in zf.namelist():
         if Path(n).name != wanted:
             continue
+        # Dual traversal guard: reject absolute/.. prefixes AND any embedded
+        # parent-segment in normalized path parts.
         if n.startswith(("/", "..")) or ".." in Path(n).parts:
             continue
         return n
@@ -535,6 +586,9 @@ class Agent:
     def manual_instructions(self, binary_path: Path) -> str:
         raise NotImplementedError
 
+    def post_configure_hint(self, binary_path: Path) -> str | None:
+        return None
+
     # Shared IO -------------------------------------------------------
     def config_exists(self) -> bool:
         return self.config_path is not None and self.config_path.exists()
@@ -556,15 +610,62 @@ class Agent:
         except json.JSONDecodeError:
             return None
 
+    @staticmethod
+    def _canonical_json(value: object) -> str:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+    def _backup_path(self) -> Path:
+        assert self.config_path is not None
+        return self.config_path.parent / ".recamera.bak"
+
+    def _legacy_backup_path(self) -> Path:
+        assert self.config_path is not None
+        return self.config_path.with_suffix(self.config_path.suffix + ".bak")
+
+    def _delete_config_and_backups(self) -> None:
+        assert self.config_path is not None
+        if self.config_path.exists():
+            self.config_path.unlink()
+        for backup in (self._backup_path(), self._legacy_backup_path()):
+            if backup.exists():
+                backup.unlink()
+
+    def _contains_only_recamera_registration(self, cfg: dict) -> bool:
+        probe = copy.deepcopy(cfg)
+        if self.is_registered(probe):
+            self.deregister(probe)
+        return probe == {}
+
     def write_config(self, data: dict) -> None:
         assert self.config_path is not None
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
+
+        new_text = json.dumps(data, indent=2) + "\n"
+        new_canonical = self._canonical_json(data)
+
         if self.config_path.exists():
-            backup = self.config_path.with_suffix(self.config_path.suffix + ".bak")
-            shutil.copy2(self.config_path, backup)
+            existing_text = self.config_path.read_text(encoding="utf-8")
+            try:
+                existing_obj = (
+                    json.loads(existing_text) if existing_text.strip() else {}
+                )
+            except json.JSONDecodeError:
+                existing_obj = None
+
+            if existing_obj is not None:
+                existing_canonical = self._canonical_json(existing_obj)
+                if existing_canonical == new_canonical:
+                    return
+
+            shutil.copy2(self.config_path, self._backup_path())
+
         tmp = self.config_path.with_suffix(self.config_path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        tmp.write_text(new_text, encoding="utf-8")
         os.replace(tmp, self.config_path)
+
+    def configure_with(self, cfg: dict, binary_path: Path) -> None:
+        self.apply(cfg, binary_path)
+        self.write_config(cfg)
 
     def configure(self, binary_path: Path) -> None:
         cfg = self.read_config()
@@ -574,8 +675,7 @@ class Agent:
                 hint="Fix or remove the file by hand before re-running — "
                 "I refuse to overwrite user data.",
             )
-        self.apply(cfg, binary_path)
-        self.write_config(cfg)
+        self.configure_with(cfg, binary_path)
 
     def unconfigure(self) -> bool:
         cfg = self.read_config()
@@ -583,8 +683,13 @@ class Agent:
             return False
         if not self.is_registered(cfg):
             return False
+
+        had_only_recamera = self._contains_only_recamera_registration(cfg)
         self.deregister(cfg)
-        self.write_config(cfg)
+        if cfg == {} and had_only_recamera:
+            self._delete_config_and_backups()
+        else:
+            self.write_config(cfg)
         return True
 
 
@@ -649,9 +754,13 @@ class VSCodeAgent(Agent):
         return shutil.which("code") is not None or self.config_exists()
 
     def apply(self, cfg: dict, binary_path: Path) -> None:
+        # VS Code stores MCP entries under `mcp.servers.<name>`.
         cfg.setdefault("mcp", {}).setdefault("servers", {})[SERVER_KEY] = {
             "command": str(binary_path),
         }
+
+    def post_configure_hint(self, binary_path: Path) -> str | None:
+        return "Reload VS Code Window to pick up MCP changes."
 
     def is_registered(self, cfg: dict) -> bool:
         return SERVER_KEY in cfg.get("mcp", {}).get("servers", {})
@@ -684,6 +793,8 @@ class ClaudeDesktopAgent(_MCPServersStyle):
         elif os.name == "nt":
             self.config_path = _appdata() / "Claude" / "claude_desktop_config.json"
         else:
+            # No official Linux Claude Desktop build today, but community
+            # setups and compatibility layers may still use this config path.
             self.config_path = (
                 Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
             )
@@ -696,7 +807,11 @@ class ClaudeDesktopAgent(_MCPServersStyle):
         return self.config_exists()
 
     def apply(self, cfg: dict, binary_path: Path) -> None:
+        # Claude Desktop expects `mcpServers.<name> = {"command": ...}`.
         cfg.setdefault("mcpServers", {})[SERVER_KEY] = {"command": str(binary_path)}
+
+    def post_configure_hint(self, binary_path: Path) -> str | None:
+        return "Restart Claude Desktop to pick up changes."
 
     def manual_instructions(self, binary_path: Path) -> str:
         return (
@@ -713,9 +828,10 @@ class ClaudeCodeAgent(_MCPServersStyle):
         self.config_path = Path.home() / ".claude.json"
 
     def detect(self) -> bool:
-        return shutil.which("claude") is not None
+        return shutil.which("claude") is not None or self.config_exists()
 
     def apply(self, cfg: dict, binary_path: Path) -> None:
+        # Claude Code MCP schema requires explicit stdio transport shape.
         cfg.setdefault("mcpServers", {})[SERVER_KEY] = {
             "type": "stdio",
             "command": str(binary_path),
@@ -740,6 +856,7 @@ class CursorAgent(_MCPServersStyle):
         return self.config_exists()
 
     def apply(self, cfg: dict, binary_path: Path) -> None:
+        # Cursor uses Claude-style `mcpServers.<name> = {"command": ...}`.
         cfg.setdefault("mcpServers", {})[SERVER_KEY] = {"command": str(binary_path)}
 
     def manual_instructions(self, binary_path: Path) -> str:
@@ -767,6 +884,7 @@ class WindsurfAgent(_MCPServersStyle):
         return self.config_exists()
 
     def apply(self, cfg: dict, binary_path: Path) -> None:
+        # Windsurf uses Claude-style `mcpServers.<name> = {"command": ...}`.
         cfg.setdefault("mcpServers", {})[SERVER_KEY] = {"command": str(binary_path)}
 
     def manual_instructions(self, binary_path: Path) -> str:
@@ -787,6 +905,7 @@ class NanobotAgent(Agent):
         return shutil.which("nanobot") is not None or self.config_exists()
 
     def apply(self, cfg: dict, binary_path: Path) -> None:
+        # Nanobot nests MCP servers under `tools.mcpServers.<name>`.
         cfg.setdefault("tools", {}).setdefault("mcpServers", {})[SERVER_KEY] = {
             "command": str(binary_path),
             "args": [],
@@ -819,7 +938,8 @@ ALL_AGENT_CLASSES: tuple[type[Agent], ...] = (
 
 
 def agents_by_key() -> dict[str, Agent]:
-    return {cls().key: cls() for cls in ALL_AGENT_CLASSES}
+    instances = [cls() for cls in ALL_AGENT_CLASSES]
+    return {a.key: a for a in instances}
 
 
 def _resolve_keys(keys: Sequence[str]) -> list[Agent]:
@@ -838,7 +958,8 @@ def filter_agents(keys: Sequence[str] | None) -> list[Agent]:
     """Return detected agents (when `keys` is falsy) or the exact named set."""
     if keys:
         return _resolve_keys(keys)
-    return [cls() for cls in ALL_AGENT_CLASSES if cls().detect()]
+    instances = [cls() for cls in ALL_AGENT_CLASSES]
+    return [agent for agent in instances if agent.detect()]
 
 
 def all_or_named_agents(keys: Sequence[str] | None) -> list[Agent]:
@@ -861,6 +982,14 @@ def resolve_installed_binary(install_dir: Path, system: str) -> Path | None:
         return candidate
     on_path = shutil.which(BINARY_NAME)
     return Path(on_path) if on_path else None
+
+
+@dataclass
+class ConfigureReport:
+    configured: list[Agent]
+    already: list[Agent]
+    skipped: list[Agent]
+    failed: list[Agent]
 
 
 def do_install(args: argparse.Namespace) -> int:
@@ -895,14 +1024,13 @@ def do_install(args: argparse.Namespace) -> int:
     Ui.info(f"Installed to {Ui.cyan(str(binary_path))}")
 
     agents = filter_agents(args.client)
-    failed: list[Agent] = []
+    report = ConfigureReport(configured=[], already=[], skipped=[], failed=[])
     if not agents and not args.client:
         Ui.warn("No supported MCP clients detected on this system.")
     else:
-        failed = _configure_agents(agents, binary_path)
+        report = _configure_agents(agents, binary_path)
 
-    configured = [a for a in agents if a not in failed]
-    _print_summary(binary_path, configured, failed)
+    _print_summary(binary_path, report)
 
     print(f"BINARY_PATH={binary_path}")
     return 0
@@ -929,18 +1057,18 @@ def _download_and_extract(
         return extract_and_install(archive, target, install_dir)
 
 
-def _configure_agents(agents: Iterable[Agent], binary_path: Path) -> list[Agent]:
+def _configure_agents(agents: Iterable[Agent], binary_path: Path) -> ConfigureReport:
     """Run interactive configuration. Returns the subset whose auto-configure
     failed (broken config, write error, or raised SetupError) — these are
     the only agents we still owe a manual-setup snippet at the end."""
     agents = list(agents)
+    report = ConfigureReport(configured=[], already=[], skipped=[], failed=[])
     if not agents:
-        return []
+        return report
 
     print()
     Ui.info(f"MCP clients: {', '.join(Ui.bold(a.name) for a in agents)}")
 
-    failed: list[Agent] = []
     for agent in agents:
         cfg = agent.read_config()
         if cfg is None:
@@ -949,49 +1077,59 @@ def _configure_agents(agents: Iterable[Agent], binary_path: Path) -> list[Agent]
                 f"({agent.config_path}). Skipping — refusing to overwrite."
             )
             Ui.hint("Fix the file by hand then re-run `configure`.")
-            failed.append(agent)
+            report.failed.append(agent)
             continue
 
         if agent.is_registered(cfg):
             Ui.info(f"{agent.name}: already configured — skipping")
+            report.already.append(agent)
             continue
 
         prompt = f"Configure {Ui.bold(agent.name)} ({Ui.dim(str(agent.config_path))})?"
         if not Ui.ask_yes_no(prompt, default=True):
             Ui.info(f"{agent.name}: skipped")
+            report.skipped.append(agent)
             continue
 
         try:
-            agent.configure(binary_path)
+            agent.configure_with(cfg, binary_path)
         except SetupError as e:
             Ui.warn(f"{agent.name}: {e}")
             if e.hint:
                 Ui.hint(e.hint)
-            failed.append(agent)
+            report.failed.append(agent)
             continue
         except OSError as e:
             Ui.warn(f"{agent.name}: failed to write config — {e}")
-            failed.append(agent)
+            report.failed.append(agent)
             continue
 
         Ui.info(f"{agent.name}: configured")
-        if isinstance(agent, ClaudeDesktopAgent):
-            print(f"   {Ui.dim('Restart Claude Desktop to pick up changes.')}")
+        report.configured.append(agent)
+        hint = agent.post_configure_hint(binary_path)
+        if hint:
+            print(f"   {Ui.dim(hint)}")
 
-    return failed
+    return report
 
 
 def _print_summary(
     binary_path: Path,
-    configured: Iterable[Agent],
-    failed: Iterable[Agent] = (),
+    report: ConfigureReport,
 ) -> None:
-    configured = list(configured)
-    failed = list(failed)
+    configured = list(report.configured)
+    already = list(report.already)
+    skipped = list(report.skipped)
+    failed = list(report.failed)
+
     Ui.rule("Installation complete")
     print(f"  Binary:  {Ui.cyan(str(binary_path))}")
     if configured:
         print(f"  Clients: {', '.join(a.name for a in configured)}")
+    if already:
+        print(f"  Already: {', '.join(a.name for a in already)}")
+    if skipped:
+        print(f"  Skipped: {', '.join(a.name for a in skipped)}")
 
     if failed:
         print()
@@ -1014,6 +1152,13 @@ def do_check(args: argparse.Namespace) -> int:
 
 def do_uninstall(args: argparse.Namespace) -> int:
     install_dir = Path(args.dir).expanduser().resolve()
+
+    if not sys.stdin.isatty() and not bool(getattr(args, "yes", False)):
+        raise SetupError(
+            "Refusing to run uninstall non-interactively without --yes.",
+            hint="Re-run with `uninstall -y` to confirm removal.",
+        )
+
     Ui.rule("reCamera Intellisense MCP Server — uninstall")
     removed_any = False
 
@@ -1108,25 +1253,32 @@ def _build_parser() -> argparse.ArgumentParser:
 
     known_clients = ", ".join(a().key for a in ALL_AGENT_CLASSES)
 
-    def add_common(p: argparse.ArgumentParser) -> None:
+    def add_common(
+        p: argparse.ArgumentParser,
+        *,
+        include_client: bool = True,
+        include_yes: bool = True,
+    ) -> None:
         p.add_argument(
             "--dir",
             default=str(DEFAULT_INSTALL_DIR),
             help=f"Install directory (default: {DEFAULT_INSTALL_DIR}).",
         )
-        p.add_argument(
-            "--client",
-            action="append",
-            metavar="NAME",
-            help=f"Operate only on the named MCP client. "
-            f"May repeat. Known: {known_clients}.",
-        )
-        p.add_argument(
-            "-y",
-            "--yes",
-            action="store_true",
-            help="Non-interactive mode: accept all prompts.",
-        )
+        if include_client:
+            p.add_argument(
+                "--client",
+                action="append",
+                metavar="NAME",
+                help=f"Operate only on the named MCP client. "
+                f"May repeat. Known: {known_clients}.",
+            )
+        if include_yes:
+            p.add_argument(
+                "-y",
+                "--yes",
+                action="store_true",
+                help="Non-interactive mode: accept all prompts.",
+            )
 
     install_p = sub.add_parser(
         "install",
@@ -1163,11 +1315,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "check",
         help="Print the installed binary path and exit 0, else exit 1.",
     )
-    check_p.add_argument(
-        "--dir",
-        default=str(DEFAULT_INSTALL_DIR),
-        help=f"Install directory (default: {DEFAULT_INSTALL_DIR}).",
-    )
+    add_common(check_p, include_client=False, include_yes=False)
     check_p.set_defaults(func=do_check)
 
     uninstall_p = sub.add_parser(
@@ -1183,24 +1331,49 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     list_p.set_defaults(func=do_list_clients)
 
+    global KNOWN_SUBCOMMANDS
+    KNOWN_SUBCOMMANDS = set(sub.choices.keys())
+
     return parser
 
 
-def _normalise_argv(argv: list[str]) -> list[str]:
+def _normalise_argv(argv: list[str], subcommands: set[str]) -> list[str]:
     """Translate legacy flags and default to `install` when no command is given."""
     # Legacy `--check` (no subcommand) → `check`
     if "--check" in argv:
         rest = [a for a in argv if a != "--check"]
         return ["check", *rest]
 
-    subcommands = {"install", "configure", "check", "uninstall", "list-clients"}
-    has_sub = any((not a.startswith("-")) and a in subcommands for a in argv)
-    if not has_sub and not any(a in ("-h", "--help") for a in argv):
+    if any(a in ("-h", "--help") for a in argv):
+        return argv
+
+    value_flags = {"--dir", "--client", "--version"}
+    positionals: list[str] = []
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token == "--":
+            positionals.extend(a for a in argv[i + 1 :] if not a.startswith("-"))
+            break
+        if token in value_flags:
+            i += 2
+            continue
+        if any(token.startswith(f"{flag}=") for flag in value_flags):
+            i += 1
+            continue
+        if not token.startswith("-"):
+            positionals.append(token)
+        i += 1
+
+    first_positional = positionals[0] if positionals else None
+    if first_positional not in subcommands:
         return ["install", *argv]
     return argv
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _COLOUR
+
     argv = list(sys.argv[1:] if argv is None else argv)
 
     def _sigint(_signum, _frame):
@@ -1211,14 +1384,16 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, _sigint)
 
     parser = _build_parser()
-    argv = _normalise_argv(argv)
+    argv = _normalise_argv(argv, KNOWN_SUBCOMMANDS)
     args = parser.parse_args(argv)
 
     if getattr(args, "no_colour", False):
-        Ui.colour = False
+        _COLOUR = False
 
     Ui.auto_yes = bool(getattr(args, "yes", False)) or not sys.stdin.isatty()
 
+    # Defensive branch: `_normalise_argv` normally guarantees a command,
+    # but keeping this guard avoids silent breakage if parser wiring changes.
     if not args.command:
         parser.print_help()
         return 2
