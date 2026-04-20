@@ -19,7 +19,7 @@ Drive one or more [reCamera Pro (Pending Release)](https://wiki.seeedstudio.com/
 
 ## Requirements
 
-- `python3` 3.8+ (stdlib only — no `pip install` needed)
+- `python3` ≥ 3.9 (stdlib only — no `pip install` needed)
 - Reachable reCamera HTTP/HTTPS API (default TCP `80`/`443`) **or** a local `rcisd` daemon serving HTTP over the Unix socket `/dev/shm/rcisd.sock`
 - Per-device auth token in the form `sk_<chars>` (Web Console → Device Info → Connection Settings → HTTP/HTTPS)
 - Credential store at `~/.recamera/devices.json` (auto-created, chmod `600`). Shared with the MCP server if installed.
@@ -103,7 +103,7 @@ All commands accept `device_name` (string) unless noted. `device_name` resolves 
 | `stop_capture` | `device_name` | — |
 | `capture_image` | `device_name` | `output`, `timeout` |
 
-`capture_image` is the one-shot helper: it starts a `JPG`, polls until terminal, fetches the file, and returns `{event, path, size, content_base64}` (where `event` is the terminal capture event with `status == "COMPLETED"`). `MP4` must go through `start_capture` + poll `get_capture_status` + `fetch_file`.
+`capture_image` is the one-shot helper: it starts a `JPG`, polls until terminal, fetches the file, and returns `{event, path, size, content_base64}` (where `event` is the terminal capture event with `status == "COMPLETED"`). For `MP4`, drive the pipeline manually: `start_capture` → poll `get_capture_status` until `last_capture.status` is terminal (`COMPLETED` / `FAILED` / `INTERRUPTED` / `CANCELED`) → `fetch_file` using the event's `output_directory` + `file_name`. `stop_capture` is only meaningful for in-flight video.
 
 ### Storage
 `get_storage_status`, `set_storage_slot`, `configure_storage_quota`, `storage_task_submit`, `storage_task_status`, `storage_task_cancel`. Actions: `FORMAT`, `FREE_UP`, `EJECT`, `REMOVE_FILES_OR_DIRECTORIES` (the last requires `files`, paths relative to the slot's data directory). Default is async; `"sync": true` is accepted only for fast actions (`EJECT`, `REMOVE_FILES_OR_DIRECTORIES`) — `FORMAT`/`FREE_UP` must run async and be polled with `storage_task_status`.
@@ -117,7 +117,7 @@ All commands accept `device_name` (string) unless noted. `device_name` resolves 
 - `delete_file {device_name, path}`.
 
 ### GPIO
-`list_gpios`, `get_gpio_info {pin_id}`, `set_gpio_value {pin_id, value}` → returns the written value (`0`/`1`); auto-configures push-pull output. `get_gpio_value {pin_id, debounce_ms?}` → returns `0` or `1` as an integer; auto-configures floating input. Debounce defaults to 100 ms; setting it > 0 implicitly enables both-edge detection.
+`list_gpios`, `get_gpio_info {pin_id}`. `set_gpio_value {pin_id, value}` drives `0` or `1` and auto-reconfigures the pin as push-pull output. `get_gpio_value {pin_id, debounce_ms?}` returns `0` or `1` and auto-reconfigures the pin as floating input. Debounce defaults to 100 ms; when `debounce_ms > 0` and the pin's edge mode was `none`, the SDK also switches it to both-edge detection (the device rejects debounce with `edge=none`). Both calls have this side effect on pin direction — don't use them as read-only probes.
 
 ## Key schemas
 
@@ -141,7 +141,7 @@ All commands accept `device_name` (string) unless noted. `device_name` resolves 
 
 ### Record trigger (tagged union, `kind` field)
 ```json
-{"kind":"inference_set", "rules":[ /* DetectionRule[] */]}
+{"kind":"inference_set", "rules":[ /* DetectionRule[] */ ]}
 {"kind":"timer", "interval_seconds": 60}
 {"kind":"gpio", "num":1, "state":"PULL_UP", "signal":"FALLING", "debounce_ms":50}
 {"kind":"tty",  "name":"tty0", "command":"SHOOT"}
@@ -152,8 +152,7 @@ For `gpio` provide one of `name` or `num`; `state` ∈ {`DISABLED`,`FLOATING`,`P
 
 ### Detection event
 ```json
-{"timestamp":"2026-04-20T12:34:56Z","timestamp_unix_ms":1745152496000,
- "rule_name":"front-door-person","snapshot_path":"/mnt/.../abcd.jpg"}
+{"timestamp":"2026-04-20T12:34:56Z","timestamp_unix_ms":1745152496000,"rule_name":"front-door-person","snapshot_path":"/mnt/.../abcd.jpg"}
 ```
 `snapshot_path` (when present) is an absolute on-device path — feed it to `fetch_file`, not `fetch_record`.
 
@@ -196,8 +195,8 @@ while True:
 ```
 
 ### 4 — On-demand snapshot / video
-- **JPG**: `capture_image '{"device_name":"cam1"}'` → returns base64.
-- **MP4**: `start_capture '{"device_name":"cam1","format":"MP4","video_length_seconds":10}'`; poll `get_capture_status` until `last_capture.status ∈ {COMPLETED, FAILED, INTERRUPTED, CANCELED}`; `fetch_file '{"device_name":"cam1","path":"<absolute path from event>"}'`.
+- **JPG**: `capture_image '{"device_name":"cam1"}'` → returns base64 inline.
+- **MP4**: `start_capture '{"device_name":"cam1","format":"MP4","video_length_seconds":10}'`, then poll `get_capture_status` until `last_capture.status` is terminal, then `fetch_file` with the absolute path assembled from the event's `output_directory` + `file_name`.
 
 ### 5 — Browse and retrieve recordings
 - `list_records '{"device_name":"cam1"}'` → `{entries, offset, limit, total, has_more}`; iterate top-level date folders from `entries`.
@@ -206,8 +205,7 @@ while True:
 
 ### 6 — Hybrid trigger (GPIO pulse → 5 s MP4)
 ```json
-{"device_name":"cam1",
- "trigger":{"kind":"gpio","num":1,"state":"PULL_UP","signal":"FALLING","debounce_ms":50}}
+{"device_name":"cam1","trigger":{"kind":"gpio","num":1,"state":"PULL_UP","signal":"FALLING","debounce_ms":50}}
 ```
 Pair with `set_record_config '{"device_name":"cam1","rule_enabled":true,"writer_format":"MP4","writer_interval_ms":0}'` and ensure a storage slot is selected (`set_storage_slot`).
 
@@ -221,18 +219,18 @@ Pair with `set_record_config '{"device_name":"cam1","rule_enabled":true,"writer_
 export PYTHONPATH="{baseDir}/scripts"
 alias rci='python3 -m recamera_intellisense'
 
-rci                                                                 # list all commands
+rci # list all commands
 rci add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxx"}'
 rci list_devices
 rci get_detection_models_info '{"device_name":"cam1"}'
-rci set_detection_model      '{"device_name":"cam1","model_name":"yolo11n"}'
-rci set_detection_rules      '{"device_name":"cam1","rules":[{"name":"person","label_filter":["person"]}]}'
-rci get_detection_events     '{"device_name":"cam1","start_unix_ms":1713500000000}'
-rci capture_image            '{"device_name":"cam1"}'
-rci list_records             '{"device_name":"cam1"}'
-rci fetch_record             '{"device_name":"cam1","path":"2026-04-20/evt-001.jpg"}'
-rci get_storage_status       '{"device_name":"cam1"}'
-rci set_gpio_value           '{"device_name":"cam1","pin_id":1,"value":1}'
+rci set_detection_model '{"device_name":"cam1","model_name":"yolo11n"}'
+rci set_detection_rules '{"device_name":"cam1","rules":[{"name":"person","label_filter":["person"]}]}'
+rci get_detection_events '{"device_name":"cam1","start_unix_ms":1745150000000}'
+rci capture_image '{"device_name":"cam1"}'
+rci list_records '{"device_name":"cam1"}'
+rci fetch_record '{"device_name":"cam1","path":"2026-04-20/evt-001.jpg"}'
+rci get_storage_status '{"device_name":"cam1"}'
+rci set_gpio_value '{"device_name":"cam1","pin_id":1,"value":1}'
 ```
 
 ## Execution checklist (copy for multi-step tasks)

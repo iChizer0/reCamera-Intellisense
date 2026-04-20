@@ -73,4 +73,11 @@ if __name__ == "__main__":
     # Fire the hook on bare ``python setup.py`` invocations too.
     _link_skill_package()
 
+# Ensure setuptools reads this package's pyproject.toml / finds the right
+# source tree even when invoked from a different working directory (e.g.
+# ``python recamera-intellisense-sdk/setup.py build_py`` from the repo root).
+# Without this, setuptools falls back to flat-layout auto-discovery in the
+# caller's CWD and fails with "Multiple top-level packages discovered".
+os.chdir(str(pathlib.Path(__file__).resolve().parent))
+
 setup(cmdclass={"build_py": _BuildPy, "develop": _Develop})
