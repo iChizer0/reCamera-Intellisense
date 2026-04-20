@@ -1,6 +1,6 @@
 ---
 name: recamera-intellisense
-description: Register and control reCamera V2 devices from an agent — onboard cameras, pick AI detection models by name, configure rule-based triggers (AI / timer / GPIO / TTY / HTTP / always-on), poll detection events with snapshots, capture JPG/RAW/MP4 on demand, browse recorded clips, manage storage, and drive GPIO pins. Uses a bundled stdlib-only Python SDK invoked via a single JSON argument per command. Trigger this skill whenever the user mentions reCamera, camera onboarding, object/person detection, event polling, snapshot or video capture, recording rules, on-device GPIO, or asks to wire a physical camera into an agent workflow — even when they don't name the product explicitly.
+description: Register and control reCamera Pro devices from an agent — onboard cameras, pick AI detection models by name, configure rule-based triggers (AI / timer / GPIO / TTY / HTTP / always-on), poll detection events with snapshots, capture JPG/RAW/MP4 on demand, browse recorded clips, manage storage, and drive GPIO pins. Uses a bundled stdlib-only Python SDK invoked via a single JSON argument per command. Trigger this skill whenever the user mentions reCamera, camera onboarding, object/person detection, event polling, snapshot or video capture, recording rules, on-device GPIO, or asks to wire a physical camera into an agent workflow — even when they don't name the product explicitly.
 metadata: {
   "openclaw": {
     "emoji": "📷",
@@ -15,7 +15,7 @@ user-invocable: true
 
 # reCamera Intellisense
 
-Drive one or more [reCamera V2](https://wiki.seeedstudio.com/recamera/) devices: device registration, AI detection configuration, rule-based recording, event polling, on-demand capture, storage/records management, and GPIO control. The skill bundles a Python SDK (`scripts/recamera_intellisense/`) that is the **single source of truth** for every command's parameters; the same package backs the MCP server, so CLI and MCP schemas are identical.
+Drive one or more [reCamera Pro (Pending Release)](https://wiki.seeedstudio.com/recamera/) devices: device registration, AI detection configuration, rule-based recording, event polling, on-demand capture, storage/records management, and GPIO control. The skill bundles a Python SDK (`scripts/recamera_intellisense/`) that is the **single source of truth** for every command's parameters; the same package backs the MCP server, so CLI and MCP schemas are identical.
 
 ## Requirements
 

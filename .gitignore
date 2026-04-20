@@ -3,6 +3,6 @@
 **/target
 **/Cargo.lock
 
-**/__pycache__
+__pycache__
 
-skills/recamera-intellisense/scripts
+skills/recamera-intellisense/scripts/**
