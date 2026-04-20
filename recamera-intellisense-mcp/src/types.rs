@@ -4,6 +4,107 @@ use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// MARK: Enums (closed-set strings exposed in tool schemas)
+
+/// Transport protocol for reaching a reCamera device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    Http,
+    Https,
+}
+
+impl Protocol {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Protocol::Http => "http",
+            Protocol::Https => "https",
+        }
+    }
+}
+
+/// Writer / capture media format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum MediaFormat {
+    Mp4,
+    Jpg,
+    Raw,
+}
+
+impl MediaFormat {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MediaFormat::Mp4 => "MP4",
+            MediaFormat::Jpg => "JPG",
+            MediaFormat::Raw => "RAW",
+        }
+    }
+}
+
+/// Storage maintenance task family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum StorageAction {
+    Format,
+    FreeUp,
+    Eject,
+    RemoveFilesOrDirectories,
+}
+
+impl StorageAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StorageAction::Format => "FORMAT",
+            StorageAction::FreeUp => "FREE_UP",
+            StorageAction::Eject => "EJECT",
+            StorageAction::RemoveFilesOrDirectories => "REMOVE_FILES_OR_DIRECTORIES",
+        }
+    }
+}
+
+/// GPIO-trigger pin state (subset accepted by the record-rule config).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum GpioTriggerState {
+    Disabled,
+    Floating,
+    PullUp,
+    PullDown,
+}
+
+impl GpioTriggerState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GpioTriggerState::Disabled => "DISABLED",
+            GpioTriggerState::Floating => "FLOATING",
+            GpioTriggerState::PullUp => "PULL_UP",
+            GpioTriggerState::PullDown => "PULL_DOWN",
+        }
+    }
+}
+
+/// GPIO-trigger signal condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum GpioTriggerSignal {
+    High,
+    Low,
+    Rising,
+    Falling,
+}
+
+impl GpioTriggerSignal {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GpioTriggerSignal::High => "HIGH",
+            GpioTriggerSignal::Low => "LOW",
+            GpioTriggerSignal::Rising => "RISING",
+            GpioTriggerSignal::Falling => "FALLING",
+        }
+    }
+}
+
 // MARK: Device
 
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -197,10 +298,10 @@ pub struct GpioTrigger {
     /// GPIO pin number (provide `name` or `num`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub num: Option<i32>,
-    /// "DISABLED" | "FLOATING" | "PULL_UP" | "PULL_DOWN".
-    pub state: String,
-    /// "HIGH" | "LOW" | "RISING" | "FALLING".
-    pub signal: String,
+    /// Pin state: one of DISABLED | FLOATING | PULL_UP | PULL_DOWN.
+    pub state: GpioTriggerState,
+    /// Signal condition: one of HIGH | LOW | RISING | FALLING.
+    pub signal: GpioTriggerSignal,
     /// Debounce in ms, >= 0.
     pub debounce_ms: i64,
 }
@@ -275,6 +376,21 @@ pub struct DirEntry {
     pub mtime: Option<String>,
 }
 
+/// Paginated wrapper around a directory listing.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DirListing {
+    /// Current slice of entries.
+    pub entries: Vec<DirEntry>,
+    /// Offset applied to produce this slice.
+    pub offset: usize,
+    /// Requested limit (echoed back).
+    pub limit: usize,
+    /// Total entries available at this path.
+    pub total: usize,
+    /// True iff `offset + entries.len() < total`.
+    pub has_more: bool,
+}
+
 // MARK: Capture
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -336,9 +452,10 @@ pub struct AddDeviceParams {
     pub host: String,
     /// Auth token (format: sk_...).
     pub token: String,
-    /// "http" or "https" (default: "http").
-    pub protocol: Option<String>,
-    /// Accept self-signed certs for HTTPS (default: true).
+    /// Transport protocol (default: http).
+    pub protocol: Option<Protocol>,
+    /// Skip TLS certificate verification for HTTPS (default: false).
+    /// Set to true only for self-signed certs on a trusted LAN.
     pub allow_unsecured: Option<bool>,
     /// Custom port.
     pub port: Option<u16>,
@@ -349,7 +466,7 @@ pub struct UpdateDeviceParams {
     pub device_name: String,
     pub host: Option<String>,
     pub token: Option<String>,
-    pub protocol: Option<String>,
+    pub protocol: Option<Protocol>,
     pub allow_unsecured: Option<bool>,
     pub port: Option<u16>,
 }
@@ -398,8 +515,8 @@ pub struct GetDetectionEventsParams {
 pub struct SetRuleConfigParams {
     pub device_name: String,
     pub rule_enabled: bool,
-    /// "MP4" | "JPG" | "RAW".
-    pub writer_format: String,
+    /// One of MP4 | JPG | RAW.
+    pub writer_format: MediaFormat,
     /// Write pacing in ms; 0 = continuous.
     pub writer_interval_ms: u64,
 }
@@ -435,10 +552,11 @@ pub struct ConfigureStorageQuotaParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct StorageTaskSubmitParams {
     pub device_name: String,
-    /// "FORMAT" | "FREE_UP" | "EJECT" | "REMOVE_FILES_OR_DIRECTORIES".
-    pub action: String,
+    /// One of FORMAT | FREE_UP | EJECT | REMOVE_FILES_OR_DIRECTORIES.
+    pub action: StorageAction,
     pub dev_path: String,
-    /// Required for REMOVE_FILES_OR_DIRECTORIES; paths relative to the data directory.
+    /// Required for REMOVE_FILES_OR_DIRECTORIES (ignored for other actions);
+    /// paths relative to the data directory.
     #[serde(default)]
     pub files: Vec<String>,
     /// Run synchronously (default: false = ASYNC_SUBMIT).
@@ -450,7 +568,7 @@ pub struct StorageTaskSubmitParams {
 pub struct StorageTaskQueryParams {
     pub device_name: String,
     /// Action family.
-    pub action: String,
+    pub action: StorageAction,
     pub dev_path: String,
     /// Optional async task UID to target a specific history entry.
     #[serde(default)]
@@ -466,6 +584,10 @@ pub struct ListRecordsParams {
     /// Relative path under the data directory (empty = root).
     #[serde(default)]
     pub path: String,
+    /// Maximum entries to return (default: 100, max: 500).
+    pub limit: Option<usize>,
+    /// Number of entries to skip (default: 0).
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -497,8 +619,8 @@ pub struct StartCaptureParams {
     pub device_name: String,
     /// Absolute output path under storage mount point.
     pub output: Option<String>,
-    /// "JPG" | "RAW" | "MP4" (default: "JPG").
-    pub format: Option<String>,
+    /// One of JPG | RAW | MP4 (default: JPG).
+    pub format: Option<MediaFormat>,
     /// Clip length in seconds for MP4.
     pub video_length_seconds: Option<i32>,
 }
@@ -549,3 +671,56 @@ pub fn normalize_storage_action(action: &str) -> Option<&'static str> {
 
 /// Storage async task history is passed through transparently.
 pub type StorageTaskHistory = Value;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn roundtrip_str<T>(value: T, expected: &str)
+    where
+        T: Serialize + for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug + Clone,
+    {
+        let json = serde_json::to_string(&value).unwrap();
+        assert_eq!(json, format!("\"{expected}\""));
+        let back: T = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, value);
+    }
+
+    #[test]
+    fn protocol_serializes_lowercase() {
+        roundtrip_str(Protocol::Http, "http");
+        roundtrip_str(Protocol::Https, "https");
+        assert_eq!(Protocol::Http.as_str(), "http");
+        assert_eq!(Protocol::Https.as_str(), "https");
+    }
+
+    #[test]
+    fn media_format_serializes_uppercase() {
+        roundtrip_str(MediaFormat::Mp4, "MP4");
+        roundtrip_str(MediaFormat::Jpg, "JPG");
+        roundtrip_str(MediaFormat::Raw, "RAW");
+    }
+
+    #[test]
+    fn storage_action_serializes_screaming_snake_case() {
+        roundtrip_str(StorageAction::Format, "FORMAT");
+        roundtrip_str(StorageAction::FreeUp, "FREE_UP");
+        roundtrip_str(StorageAction::Eject, "EJECT");
+        roundtrip_str(
+            StorageAction::RemoveFilesOrDirectories,
+            "REMOVE_FILES_OR_DIRECTORIES",
+        );
+    }
+
+    #[test]
+    fn gpio_trigger_enums_round_trip() {
+        roundtrip_str(GpioTriggerState::Floating, "FLOATING");
+        roundtrip_str(GpioTriggerState::PullUp, "PULL_UP");
+        roundtrip_str(GpioTriggerState::PullDown, "PULL_DOWN");
+        roundtrip_str(GpioTriggerState::Disabled, "DISABLED");
+        roundtrip_str(GpioTriggerSignal::High, "HIGH");
+        roundtrip_str(GpioTriggerSignal::Low, "LOW");
+        roundtrip_str(GpioTriggerSignal::Rising, "RISING");
+        roundtrip_str(GpioTriggerSignal::Falling, "FALLING");
+    }
+}

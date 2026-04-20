@@ -93,12 +93,34 @@ pub async fn set_detection_rules(
     device: &DeviceRecord,
     rules: &[DetectionRule],
 ) -> Result<()> {
+    for (idx, rule) in rules.iter().enumerate() {
+        validate_confidence_range(idx, &rule.confidence_range_filter)?;
+    }
     ensure_record_image(client, device).await?;
     storage::ensure_storage(client, device).await?;
     let trigger = RecordTrigger::InferenceSet {
         rules: rules.to_vec(),
     };
     api_rule::set_trigger(client, device, &trigger).await
+}
+
+fn validate_confidence_range(idx: usize, range: &[f64]) -> Result<()> {
+    if range.len() != 2 {
+        bail!(
+            "rule #{idx}: confidence_range_filter must be exactly [min, max]; got {} value(s)",
+            range.len()
+        );
+    }
+    let (min, max) = (range[0], range[1]);
+    if !(0.0..=1.0).contains(&min) || !(0.0..=1.0).contains(&max) {
+        bail!(
+            "rule #{idx}: confidence_range_filter values must be within [0.0, 1.0]; got [{min}, {max}]"
+        );
+    }
+    if min > max {
+        bail!("rule #{idx}: confidence_range_filter min ({min}) must be <= max ({max})");
+    }
+    Ok(())
 }
 
 // MARK: Events (daemon)
@@ -135,4 +157,34 @@ async fn ensure_record_image(client: &ApiClient, device: &DeviceRecord) -> Resul
         },
     };
     api_rule::set_config(client, device, &new_cfg).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_confidence_range;
+
+    #[test]
+    fn validate_confidence_range_accepts_valid() {
+        assert!(validate_confidence_range(0, &[0.0, 1.0]).is_ok());
+        assert!(validate_confidence_range(0, &[0.25, 0.75]).is_ok());
+        assert!(validate_confidence_range(0, &[0.5, 0.5]).is_ok());
+    }
+
+    #[test]
+    fn validate_confidence_range_rejects_bad_length() {
+        assert!(validate_confidence_range(0, &[]).is_err());
+        assert!(validate_confidence_range(0, &[0.5]).is_err());
+        assert!(validate_confidence_range(0, &[0.0, 0.5, 1.0]).is_err());
+    }
+
+    #[test]
+    fn validate_confidence_range_rejects_out_of_range() {
+        assert!(validate_confidence_range(0, &[-0.01, 0.5]).is_err());
+        assert!(validate_confidence_range(0, &[0.0, 1.01]).is_err());
+    }
+
+    #[test]
+    fn validate_confidence_range_rejects_inverted() {
+        assert!(validate_confidence_range(0, &[0.8, 0.2]).is_err());
+    }
 }

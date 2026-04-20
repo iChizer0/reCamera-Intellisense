@@ -121,7 +121,8 @@ impl ReCameraServer {
     // MARK: Device management
 
     #[tool(
-        description = "Detect a reCamera Intellisense daemon running locally by checking its Unix socket. Returns the socket path if found."
+        description = "Detect a reCamera Intellisense daemon running locally by checking its Unix socket. Returns a structured result: {detected: bool, socket_path: string, hint?: string}. When detected=false, 'hint' explains how to launch the daemon.",
+        annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn detect_local_device(
         &self,
@@ -132,15 +133,31 @@ impl ReCameraServer {
             .as_deref()
             .unwrap_or("/dev/shm/rcisd.sock");
         let found = ApiClient::detect_local(socket_path).await;
-        if found {
-            Ok(text_result(socket_path))
+        let payload = if found {
+            serde_json::json!({
+                "detected": true,
+                "socket_path": socket_path,
+            })
         } else {
-            Ok(text_result("No daemon detected"))
-        }
+            serde_json::json!({
+                "detected": false,
+                "socket_path": socket_path,
+                "hint": format!(
+                    "No rcisd daemon found at '{socket_path}'. Start the daemon (recamera-intellisense-daemon) or pass socket_path explicitly."
+                ),
+            })
+        };
+        Ok(try_tool!(json_result(&payload)))
     }
 
     #[tool(
-        description = "Register (add) a new reCamera device. Connectivity is tested before saving."
+        description = "Register (add) a new reCamera device. Connectivity is tested before saving.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
     )]
     async fn add_device(
         &self,
@@ -149,7 +166,7 @@ impl ReCameraServer {
         try_tool!(validate_not_empty(&params.name, "name"));
         try_tool!(validate_not_empty(&params.host, "host"));
         try_tool!(validate_not_empty(&params.token, "token"));
-        let protocol = params.protocol.as_deref().unwrap_or("http");
+        let protocol = params.protocol.unwrap_or(Protocol::Http);
         // Secure-by-default: verify TLS certs unless the caller opts in.
         let allow_unsecured = params.allow_unsecured.unwrap_or(false);
         try_tool!(
@@ -157,7 +174,7 @@ impl ReCameraServer {
                 .test_connection(
                     &params.host,
                     &params.token,
-                    protocol,
+                    protocol.as_str(),
                     allow_unsecured,
                     params.port
                 )
@@ -170,7 +187,7 @@ impl ReCameraServer {
                     &params.name,
                     &params.host,
                     &params.token,
-                    protocol,
+                    protocol.as_str(),
                     allow_unsecured,
                     params.port
                 )
@@ -183,37 +200,59 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Update an existing reCamera device's credentials. Connectivity is tested before saving."
+        description = "Update an existing reCamera device's credentials. Connectivity is re-tested only when network-relevant fields change.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn update_device(
         &self,
         Parameters(params): Parameters<UpdateDeviceParams>,
     ) -> Result<CallToolResult, ErrorData> {
         try_tool!(validate_not_empty(&params.device_name, "device_name"));
-        let (host, token, protocol, allow_unsecured, port) = {
+        let (host, token, protocol, allow_unsecured, port, must_reprobe) = {
             let store = self.store.read().await;
             let existing = match store.get_device(&params.device_name) {
                 Some(d) => d,
                 None => {
                     return Ok(CallToolResult::error(vec![Content::text(format!(
-                        "Device '{}' not found.",
+                        "Device '{}' not found. Use list_devices to see registered profiles.",
                         params.device_name
                     ))]))
                 }
             };
-            (
-                params.host.clone().unwrap_or(existing.host),
-                params.token.clone().unwrap_or(existing.token),
-                params.protocol.clone().unwrap_or(existing.protocol),
-                params.allow_unsecured.unwrap_or(existing.allow_unsecured),
-                params.port.or(existing.port),
-            )
+            let host_changed = params.host.as_ref().is_some_and(|h| h != &existing.host);
+            let token_changed = params.token.as_ref().is_some_and(|t| t != &existing.token);
+            let proto_changed = params
+                .protocol
+                .as_ref()
+                .is_some_and(|p| p.as_str() != existing.protocol);
+            let port_changed = matches!(params.port, Some(p) if Some(p) != existing.port);
+            let unsec_changed = params
+                .allow_unsecured
+                .is_some_and(|u| u != existing.allow_unsecured);
+            let host = params.host.clone().unwrap_or(existing.host.clone());
+            let token = params.token.clone().unwrap_or(existing.token.clone());
+            let protocol = params
+                .protocol
+                .map(|p| p.as_str().to_string())
+                .unwrap_or(existing.protocol);
+            let allow_unsecured = params.allow_unsecured.unwrap_or(existing.allow_unsecured);
+            let port = params.port.or(existing.port);
+            let must_reprobe =
+                host_changed || token_changed || proto_changed || port_changed || unsec_changed;
+            (host, token, protocol, allow_unsecured, port, must_reprobe)
         };
-        try_tool!(
-            self.client
-                .test_connection(&host, &token, &protocol, allow_unsecured, port)
-                .await
-        );
+        if must_reprobe {
+            try_tool!(
+                self.client
+                    .test_connection(&host, &token, &protocol, allow_unsecured, port)
+                    .await
+            );
+        }
         let mut store = self.store.write().await;
         try_tool!(
             store
@@ -233,7 +272,15 @@ impl ReCameraServer {
         )))
     }
 
-    #[tool(description = "Remove a registered reCamera device.")]
+    #[tool(
+        description = "Remove a registered reCamera device.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
     async fn remove_device(
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
@@ -253,7 +300,10 @@ impl ReCameraServer {
         }
     }
 
-    #[tool(description = "Get the connection credentials of a registered reCamera device.")]
+    #[tool(
+        description = "Get the connection credentials of a registered reCamera device.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
     async fn get_device(
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
@@ -269,7 +319,10 @@ impl ReCameraServer {
         }
     }
 
-    #[tool(description = "List all registered reCamera devices sorted by name.")]
+    #[tool(
+        description = "List all registered reCamera devices sorted by name.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
     async fn list_devices(&self) -> Result<CallToolResult, ErrorData> {
         let store = self.store.read().await;
         Ok(try_tool!(json_result(&store.list_devices())))
@@ -277,7 +330,10 @@ impl ReCameraServer {
 
     // MARK: Detection
 
-    #[tool(description = "Get information about available detection models on a reCamera device.")]
+    #[tool(
+        description = "Get information about available detection models on a reCamera device.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
     async fn get_detection_models_info(
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
@@ -288,7 +344,8 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Get the currently active detection model. Returns null if detection is disabled."
+        description = "Get the currently active detection model. Returns null if detection is disabled.",
+        annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_detection_model(
         &self,
@@ -300,7 +357,13 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the active detection model by model_id or model_name (provide exactly one)."
+        description = "Set the active detection model by model_id or model_name (provide exactly one).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn set_detection_model(
         &self,
@@ -319,7 +382,10 @@ impl ReCameraServer {
         Ok(text_result("Detection model set successfully."))
     }
 
-    #[tool(description = "Get the current detection schedule. Returns null if disabled.")]
+    #[tool(
+        description = "Get the current detection schedule. Returns null if disabled.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
     async fn get_detection_schedule(
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
@@ -330,7 +396,13 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the detection schedule. Use null/empty to disable. Time format: 'Day HH:MM:SS'."
+        description = "Set the detection schedule (equivalent to set_schedule_rule). Use null/empty to disable. Time format: 'Day HH:MM:SS'.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn set_detection_schedule(
         &self,
@@ -345,7 +417,8 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Get current detection rules. Empty if prerequisites are not met or trigger is not INFERENCE_SET."
+        description = "Get current detection rules. Empty if prerequisites are not met or trigger is not INFERENCE_SET.",
+        annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_detection_rules(
         &self,
@@ -357,7 +430,13 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set detection rules (INFERENCE_SET trigger). Auto-enables record image and default storage."
+        description = "Set detection rules (INFERENCE_SET trigger). Auto-enables record image and default storage. confidence_range_filter must be [min,max] in [0,1].",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn set_detection_rules(
         &self,
@@ -369,7 +448,8 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Get detection events within an optional [start_unix_ms, end_unix_ms] window."
+        description = "Get detection events within an optional [start_unix_ms, end_unix_ms] window.",
+        annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_detection_events(
         &self,
@@ -388,7 +468,15 @@ impl ReCameraServer {
         Ok(try_tool!(json_result(&events)))
     }
 
-    #[tool(description = "Clear all cached detection events on a reCamera device.")]
+    #[tool(
+        description = "Clear all cached detection events on a reCamera device.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
     async fn clear_detection_events(
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
@@ -401,7 +489,8 @@ impl ReCameraServer {
     // MARK: Rule system
 
     #[tool(
-        description = "Get low-level rule-system info: ready flag, last event, available GPIOs/TTYs, media state."
+        description = "Get low-level rule-system info: ready flag, last event, available GPIOs/TTYs, media state.",
+        annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_rule_system_info(
         &self,
@@ -413,7 +502,8 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Get the global record configuration (rule enabled + writer format/interval)."
+        description = "Get the global record configuration (rule enabled + writer format/interval).",
+        annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_record_config(
         &self,
@@ -425,7 +515,13 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the global record configuration. writer_format: MP4 | JPG | RAW. writer_interval_ms: 0 = continuous."
+        description = "Set the global record configuration. writer_format: MP4 | JPG | RAW. writer_interval_ms: 0 = continuous.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn set_record_config(
         &self,
@@ -435,7 +531,7 @@ impl ReCameraServer {
         let cfg = RuleConfig {
             rule_enabled: params.rule_enabled,
             writer: WriterConfig {
-                format: params.writer_format.to_uppercase(),
+                format: params.writer_format.as_str().to_string(),
                 interval_ms: params.writer_interval_ms,
             },
         };
@@ -443,7 +539,10 @@ impl ReCameraServer {
         Ok(text_result("Record config updated."))
     }
 
-    #[tool(description = "Get the schedule rule. Returns null if disabled.")]
+    #[tool(
+        description = "Get the schedule rule. Returns null if disabled.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
     async fn get_schedule_rule(
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
@@ -454,7 +553,13 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the schedule rule. Use null/empty to disable. Time format: 'Day HH:MM:SS'."
+        description = "Set the schedule rule (equivalent to set_detection_schedule). Use null/empty to disable. Time format: 'Day HH:MM:SS'.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn set_schedule_rule(
         &self,
@@ -466,7 +571,8 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Get the current record trigger (tagged: inference_set | timer | gpio | tty | http | always_on)."
+        description = "Get the current record trigger (tagged: inference_set | timer | gpio | tty | http | always_on).",
+        annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_record_trigger(
         &self,
@@ -478,7 +584,13 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the record trigger. Provide a tagged union with 'kind' = inference_set|timer|gpio|tty|http|always_on."
+        description = "Set the record trigger. Provide a tagged union with 'kind' = inference_set|timer|gpio|tty|http|always_on.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn set_record_trigger(
         &self,
@@ -490,7 +602,13 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Fire an HTTP-triggered record event. Only valid when trigger kind is 'http'."
+        description = "Fire an HTTP-triggered record event. Only valid when the current trigger kind is 'http' (call get_record_trigger first to confirm).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
     )]
     async fn activate_http_trigger(
         &self,
@@ -503,7 +621,10 @@ impl ReCameraServer {
 
     // MARK: Storage
 
-    #[tool(description = "Get status of all storage slots with mount/state/quota details.")]
+    #[tool(
+        description = "Get status of all storage slots with mount/state/quota details.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
     async fn get_storage_status(
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
@@ -514,7 +635,13 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Select the storage slot to enable. Leave both selectors empty to disable all slots."
+        description = "Select the storage slot to enable. Leave both selectors empty to disable all slots.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn set_storage_slot(
         &self,
@@ -529,7 +656,13 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Configure quota on a slot. quota_limit_bytes: -1 = no limit. quota_rotate: recommended true."
+        description = "Configure quota on a slot. quota_limit_bytes: -1 = no limit. quota_rotate: recommended true.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn configure_storage_quota(
         &self,
@@ -551,20 +684,40 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Submit a storage maintenance task: FORMAT | FREE_UP | EJECT | REMOVE_FILES_OR_DIRECTORIES. Defaults to async; set sync=true for short ops. REMOVE requires 'files'."
+        description = "Submit a storage maintenance task: FORMAT | FREE_UP | EJECT | REMOVE_FILES_OR_DIRECTORIES. Defaults to async; set sync=true only for EJECT or REMOVE_FILES_OR_DIRECTORIES. REMOVE requires non-empty 'files'.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
     )]
     async fn storage_task_submit(
         &self,
         Parameters(params): Parameters<StorageTaskSubmitParams>,
     ) -> Result<CallToolResult, ErrorData> {
         try_tool!(validate_not_empty(&params.dev_path, "dev_path"));
+        if matches!(params.action, StorageAction::RemoveFilesOrDirectories)
+            && params.files.is_empty()
+        {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "REMOVE_FILES_OR_DIRECTORIES requires a non-empty 'files' list.".to_string(),
+            )]));
+        }
+        if params.sync && matches!(params.action, StorageAction::Format | StorageAction::FreeUp) {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Action '{}' may take a long time and cannot be run with sync=true. Submit async (sync=false) and poll with storage_task_status.",
+                params.action.as_str()
+            ))]));
+        }
         let device = try_tool!(self.resolve(&params.device_name).await);
+        let action_str = params.action.as_str();
         let resp = if params.sync {
             try_tool!(
                 api_storage::control_sync(
                     &self.client,
                     &device,
-                    &params.action,
+                    action_str,
                     &params.dev_path,
                     &params.files
                 )
@@ -575,7 +728,7 @@ impl ReCameraServer {
                 api_storage::control_async_submit(
                     &self.client,
                     &device,
-                    &params.action,
+                    action_str,
                     &params.dev_path,
                     &params.files
                 )
@@ -585,7 +738,10 @@ impl ReCameraServer {
         Ok(try_tool!(json_result(&resp)))
     }
 
-    #[tool(description = "Query an async storage task's status history.")]
+    #[tool(
+        description = "Query an async storage task's status history.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
     async fn storage_task_status(
         &self,
         Parameters(params): Parameters<StorageTaskQueryParams>,
@@ -596,7 +752,7 @@ impl ReCameraServer {
             api_storage::control_async_status(
                 &self.client,
                 &device,
-                &params.action,
+                params.action.as_str(),
                 &params.dev_path,
                 params.task_uid.as_deref(),
             )
@@ -605,7 +761,15 @@ impl ReCameraServer {
         Ok(try_tool!(json_result(&resp)))
     }
 
-    #[tool(description = "Cancel an in-flight async storage task.")]
+    #[tool(
+        description = "Cancel an in-flight async storage task.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
     async fn storage_task_cancel(
         &self,
         Parameters(params): Parameters<StorageTaskQueryParams>,
@@ -616,7 +780,7 @@ impl ReCameraServer {
             api_storage::control_async_cancel(
                 &self.client,
                 &device,
-                &params.action,
+                params.action.as_str(),
                 &params.dev_path,
                 params.task_uid.as_deref(),
             )
@@ -628,28 +792,42 @@ impl ReCameraServer {
     // MARK: Records (relay-backed, recommended for browsing recordings)
 
     #[tool(
-        description = "List entries under the record data directory on the target (or enabled) slot. path is relative to the data directory (empty = root). Relay lifecycle handled internally."
+        description = "List entries under the record data directory on the target (or enabled) slot. path is relative to the data directory (empty = root). Supports pagination via limit (default 100, max 500) and offset (default 0); response includes total count and has_more flag. Note: internally refreshes the relay TTL.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn list_records(
         &self,
         Parameters(params): Parameters<ListRecordsParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let device = try_tool!(self.resolve(&params.device_name).await);
-        let entries = try_tool!(
+        let listing = try_tool!(
             records::list_records(
                 &self.relay_cache,
                 &self.client,
                 &device,
                 params.dev_path.as_deref(),
-                &params.path
+                &params.path,
+                params.limit,
+                params.offset,
             )
             .await
         );
-        Ok(try_tool!(json_result(&entries)))
+        Ok(try_tool!(json_result(&listing)))
     }
 
     #[tool(
-        description = "Fetch a record file via the relay. path is relative to the data directory. Videos or files > 5 MB return the direct relay URL."
+        description = "Fetch a record file via the relay. path is relative to the data directory. Videos or files > 5 MB return the direct relay URL. Note: internally refreshes the relay TTL.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
     )]
     async fn fetch_record(
         &self,
@@ -692,7 +870,8 @@ impl ReCameraServer {
     // MARK: Files (daemon-backed, arbitrary absolute paths)
 
     #[tool(
-        description = "Fetch an arbitrary file via the daemon (/api/v1/file). Path must be absolute and under the daemon's allowed prefix. For captures and detection-event snapshots. Images inline; videos / >5 MB skipped."
+        description = "Fetch an arbitrary file via the daemon (/api/v1/file). Path must be absolute and under the daemon's allowed prefix. For captures and detection-event snapshots. Images inline; videos / >5 MB skipped.",
+        annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn fetch_file(
         &self,
@@ -704,7 +883,15 @@ impl ReCameraServer {
         Ok(render_bytes(&params.path, bytes, None))
     }
 
-    #[tool(description = "Delete a file via the daemon (/api/v1/file). Path must be absolute.")]
+    #[tool(
+        description = "Delete a file via the daemon (/api/v1/file). Path must be absolute.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
     async fn delete_file(
         &self,
         Parameters(params): Parameters<DeleteFileParams>,
@@ -718,7 +905,8 @@ impl ReCameraServer {
     // MARK: Capture
 
     #[tool(
-        description = "Get the current capture status, including the last/active capture event and readiness flags."
+        description = "Get the current capture status, including the last/active capture event and readiness flags.",
+        annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_capture_status(
         &self,
@@ -730,27 +918,25 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Start a new capture session. Supported formats: JPG (image), RAW (image), MP4 (video). For MP4, specify video_length_seconds."
+        description = "Start a new capture session. Supported formats: JPG (image), RAW (image), MP4 (video). For MP4, specify video_length_seconds.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
     )]
     async fn start_capture(
         &self,
         Parameters(params): Parameters<StartCaptureParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let device = try_tool!(self.resolve(&params.device_name).await);
-        if let Some(ref fmt) = params.format {
-            let upper = fmt.to_uppercase();
-            if !["JPG", "RAW", "MP4"].contains(&upper.as_str()) {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Unsupported capture format '{fmt}'. Supported formats: JPG, RAW, MP4."
-                ))]));
-            }
-        }
         let event = try_tool!(
             api_capture::start(
                 &self.client,
                 &device,
                 params.output.as_deref(),
-                params.format.as_deref(),
+                params.format.map(|f| f.as_str()),
                 params.video_length_seconds
             )
             .await
@@ -758,7 +944,15 @@ impl ReCameraServer {
         Ok(try_tool!(json_result(&event)))
     }
 
-    #[tool(description = "Stop the current capture session (video only).")]
+    #[tool(
+        description = "Stop the current capture session (video only).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
     async fn stop_capture(
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
@@ -769,7 +963,13 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Capture a JPG image, wait for completion, and return the image bytes inline."
+        description = "Capture a JPG image, wait for completion, and return the image bytes inline.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
     )]
     async fn capture_image(
         &self,
@@ -794,7 +994,10 @@ impl ReCameraServer {
 
     // MARK: GPIO
 
-    #[tool(description = "List all GPIO pins with their info and current settings.")]
+    #[tool(
+        description = "List all GPIO pins with their info and current settings.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
     async fn list_gpios(
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
@@ -804,7 +1007,10 @@ impl ReCameraServer {
         Ok(try_tool!(json_result(&pins)))
     }
 
-    #[tool(description = "Get detailed information about a specific GPIO pin.")]
+    #[tool(
+        description = "Get detailed information about a specific GPIO pin.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
     async fn get_gpio_info(
         &self,
         Parameters(params): Parameters<GpioInfoParams>,
@@ -814,7 +1020,15 @@ impl ReCameraServer {
         Ok(try_tool!(json_result(&pin)))
     }
 
-    #[tool(description = "Set the value of a GPIO pin (0 or 1). Auto-configures as output.")]
+    #[tool(
+        description = "Set the value of a GPIO pin (0 or 1). Reconfigures the pin as a push-pull output if it is not already.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
     async fn set_gpio_value(
         &self,
         Parameters(params): Parameters<SetGpioValueParams>,
@@ -829,7 +1043,15 @@ impl ReCameraServer {
         )))
     }
 
-    #[tool(description = "Get the current value of a GPIO pin (0 or 1). Auto-configures as input.")]
+    #[tool(
+        description = "Get the current value of a GPIO pin (0 or 1). Reconfigures the pin as a floating input if it is not already, so this is NOT purely read-only.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
     async fn get_gpio_value(
         &self,
         Parameters(params): Parameters<GetGpioValueParams>,
@@ -868,8 +1090,19 @@ impl ServerHandler for ReCameraServer {
             .with_instructions(
                 "reCamera Intellisense MCP Server. Provides tools to manage reCamera devices, \
                  configure AI detection + record triggers, query events, capture images/video, \
-                 browse recorded clips (fetch_record), and control GPIO. \
-                 Register devices with add_device before using other tools."
+                 browse recorded clips (fetch_record), and control GPIO.\n\n\
+                 Recommended workflow:\n\
+                 1) Register a device with `add_device` (or confirm one exists via `list_devices`).\n\
+                 2) Verify readiness with `get_storage_status` before writing; run `set_storage_slot` / \
+                 `configure_storage_quota` if storage is not CONFIGURED or READY.\n\
+                 3) Choose an AI model with `set_detection_model`, set a window with `set_detection_schedule`, \
+                 and install rules via `set_detection_rules` (automatically picks INFERENCE_SET).\n\
+                 4) Or configure a non-AI record trigger via `set_record_trigger` (`timer`, `gpio`, `tty`, \
+                 `http`, `always_on`).\n\
+                 5) Poll `get_detection_events` for recent matches and `fetch_file` / `fetch_record` to \
+                 retrieve snapshots.\n\n\
+                 For HTTPS devices, keep `allow_unsecured=false` on the trusted network and only opt in to \
+                 `true` for self-signed certs on a trusted LAN."
                     .to_string(),
             )
     }

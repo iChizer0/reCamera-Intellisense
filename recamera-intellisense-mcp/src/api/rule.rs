@@ -4,8 +4,9 @@ use serde_json::{json, Value};
 use crate::api::expect_ok;
 use crate::api_client::ApiClient;
 use crate::types::{
-    AvailableGpio, AvailableTty, DetectionRule, DeviceRecord, GpioTrigger, RecordTrigger,
-    RuleConfig, RuleEvent, RuleEventOwner, RuleInfo, ScheduleRange, TtyTrigger, WriterConfig,
+    AvailableGpio, AvailableTty, DetectionRule, DeviceRecord, GpioTrigger, GpioTriggerSignal,
+    GpioTriggerState, RecordTrigger, RuleConfig, RuleEvent, RuleEventOwner, RuleInfo,
+    ScheduleRange, TtyTrigger, WriterConfig,
 };
 
 // MARK: Paths
@@ -261,19 +262,31 @@ pub fn parse_trigger(data: &Value) -> Result<RecordTrigger> {
         },
         "GPIO" => {
             let d = data.get("dGPIO").context("missing dGPIO")?;
+            let state_str = d
+                .get("sState")
+                .and_then(|v| v.as_str())
+                .unwrap_or("FLOATING");
+            let state = match state_str {
+                "DISABLED" => GpioTriggerState::Disabled,
+                "PULL_UP" => GpioTriggerState::PullUp,
+                "PULL_DOWN" => GpioTriggerState::PullDown,
+                _ => GpioTriggerState::Floating,
+            };
+            let signal_str = d
+                .get("sSignal")
+                .and_then(|v| v.as_str())
+                .unwrap_or("RISING");
+            let signal = match signal_str {
+                "HIGH" => GpioTriggerSignal::High,
+                "LOW" => GpioTriggerSignal::Low,
+                "FALLING" => GpioTriggerSignal::Falling,
+                _ => GpioTriggerSignal::Rising,
+            };
             RecordTrigger::Gpio(GpioTrigger {
                 name: d.get("sName").and_then(|v| v.as_str()).map(String::from),
                 num: d.get("iNum").and_then(|v| v.as_i64()).map(|n| n as i32),
-                state: d
-                    .get("sState")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("FLOATING")
-                    .to_string(),
-                signal: d
-                    .get("sSignal")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("RISING")
-                    .to_string(),
+                state,
+                signal,
                 debounce_ms: d
                     .get("iDebounceDurationMs")
                     .and_then(|v| v.as_i64())
@@ -325,8 +338,8 @@ pub fn trigger_to_json(trigger: &RecordTrigger) -> Result<Value> {
             if let Some(num) = g.num {
                 d.insert("iNum".into(), json!(num));
             }
-            d.insert("sState".into(), json!(g.state));
-            d.insert("sSignal".into(), json!(g.signal));
+            d.insert("sState".into(), json!(g.state.as_str()));
+            d.insert("sSignal".into(), json!(g.signal.as_str()));
             d.insert("iDebounceDurationMs".into(), json!(g.debounce_ms));
             json!({
                 "sCurrentSelected": "GPIO",
@@ -465,18 +478,21 @@ mod tests {
         let t = RecordTrigger::Gpio(GpioTrigger {
             name: Some("GPIO_01".into()),
             num: None,
-            state: "FLOATING".into(),
-            signal: "RISING".into(),
+            state: GpioTriggerState::Floating,
+            signal: GpioTriggerSignal::Rising,
             debounce_ms: 100,
         });
         let j = trigger_to_json(&t).unwrap();
         assert_eq!(j["sCurrentSelected"], "GPIO");
         assert_eq!(j["dGPIO"]["sName"], "GPIO_01");
+        assert_eq!(j["dGPIO"]["sState"], "FLOATING");
+        assert_eq!(j["dGPIO"]["sSignal"], "RISING");
         let back = parse_trigger(&j).unwrap();
         match back {
             RecordTrigger::Gpio(g) => {
                 assert_eq!(g.name.as_deref(), Some("GPIO_01"));
-                assert_eq!(g.state, "FLOATING");
+                assert_eq!(g.state, GpioTriggerState::Floating);
+                assert_eq!(g.signal, GpioTriggerSignal::Rising);
             }
             _ => panic!("wrong variant"),
         }
@@ -495,10 +511,32 @@ mod tests {
         let t = RecordTrigger::Gpio(GpioTrigger {
             name: None,
             num: None,
-            state: "FLOATING".into(),
-            signal: "RISING".into(),
+            state: GpioTriggerState::Floating,
+            signal: GpioTriggerSignal::Rising,
             debounce_ms: 0,
         });
         assert!(trigger_to_json(&t).is_err());
+    }
+
+    #[test]
+    fn gpio_trigger_parse_tolerates_unknown_strings() {
+        // Device response with stale/unknown state should still parse (default to Floating/Rising).
+        let j = json!({
+            "sCurrentSelected": "GPIO",
+            "dGPIO": {
+                "sName": "GPIO_03",
+                "sState": "BOGUS",
+                "sSignal": "???",
+                "iDebounceDurationMs": 50
+            }
+        });
+        let back = parse_trigger(&j).unwrap();
+        match back {
+            RecordTrigger::Gpio(g) => {
+                assert_eq!(g.state, GpioTriggerState::Floating);
+                assert_eq!(g.signal, GpioTriggerSignal::Rising);
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 }
