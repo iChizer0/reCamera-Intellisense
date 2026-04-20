@@ -51,10 +51,7 @@ impl DeviceStore {
         // credentials are world-readable.
         let tmp_path = {
             let mut p = self.file_path.clone();
-            let mut name = p
-                .file_name()
-                .map(|n| n.to_os_string())
-                .unwrap_or_default();
+            let mut name = p.file_name().map(|n| n.to_os_string()).unwrap_or_default();
             name.push(".tmp");
             p.set_file_name(name);
             p

@@ -856,6 +856,8 @@ impl ReCameraServer {
 #[tool_handler]
 impl ServerHandler for ReCameraServer {
     fn get_info(&self) -> ServerInfo {
+        let _ = &self.tool_router;
+
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(
                 "recamera-intellisense-mcp",
