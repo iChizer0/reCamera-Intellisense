@@ -130,9 +130,9 @@ def get_schedule_rule(device_name: str) -> Optional[List[Dict[str, str]]]:
 
 def set_schedule_rule(
     device_name: str,
-    schedule: Optional[List[Dict[str, str]]],
+    schedule: Optional[List[Dict[str, str]]] = None,
 ) -> None:
-    """Pass ``None`` or ``[]`` to disable (rule active 24/7)."""
+    """Pass ``None`` or ``[]`` (or omit) to disable (rule active 24/7)."""
     dev = _config.resolve(device_name)
     ranges = schedule or []
     enabled = bool(ranges)

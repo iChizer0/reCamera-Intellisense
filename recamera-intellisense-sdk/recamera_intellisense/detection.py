@@ -26,9 +26,14 @@ def get_detection_schedule(device_name: str) -> Optional[List[Dict[str, str]]]:
 
 def set_detection_schedule(
     device_name: str,
-    schedule: Optional[List[Dict[str, str]]],
+    schedule: Optional[List[Dict[str, str]]] = None,
 ) -> None:
-    """Alias for :func:`rule.set_schedule_rule`."""
+    """Alias for :func:`rule.set_schedule_rule`.
+
+    ``schedule`` defaults to ``None`` (meaning "always active"), so omitting
+    the key from the CLI payload is equivalent to passing ``schedule: []``
+    or ``schedule: null`` and clears any existing window.
+    """
     _rule.set_schedule_rule(device_name, schedule)
 
 

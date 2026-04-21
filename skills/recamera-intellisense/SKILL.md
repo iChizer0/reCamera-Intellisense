@@ -68,7 +68,7 @@ from recamera_intellisense import (
 
 ## Command catalogue
 
-All commands accept `device_name` (string) unless noted. `device_name` resolves against `~/.recamera/devices.json`; run `list_devices` to see what is registered.
+All commands accept `device_name` (string) unless noted. `device_name` resolves against `~/.recamera/devices.json`; run `list_devices` to see what is registered. Selector commands (`get_device`, `remove_device`, everything that takes `device_name`) also accept the alias `name`, so a record emitted by `list_devices` can be forwarded verbatim.
 
 ### Device registry
 | Command | Required | Optional |
@@ -87,7 +87,7 @@ All commands accept `device_name` (string) unless noted. `device_name` resolves 
 | `get_detection_models_info` | `device_name` | — |
 | `get_detection_model` | `device_name` | — |
 | `set_detection_model` | `device_name` | **one of** `model_id` or `model_name`, `fps` (default 30) |
-| `get_detection_schedule` / `set_detection_schedule` | `device_name` | `schedule` (null/empty disables → always active) |
+| `get_detection_schedule` / `set_detection_schedule` | `device_name` | `schedule` (null / empty list / omit the key disables → always active) |
 | `get_detection_rules` | `device_name` | — |
 | `set_detection_rules` | `device_name`, `rules` | `ensure_writer` (default `true`), `ensure_storage` (default `true`) |
 | `get_detection_events` | `device_name` | `start_unix_ms`, `end_unix_ms` (inclusive) |
@@ -102,7 +102,7 @@ All commands accept `device_name` (string) unless noted. `device_name` resolves 
 | Command | Required | Optional |
 |---|---|---|
 | `get_capture_status` | `device_name` | — |
-| `start_capture` | `device_name` | `output` (absolute path), `format` (`JPG`/`RAW`/`MP4`), `video_length_seconds` |
+| `start_capture` | `device_name` | `output` (absolute **on-device** directory; omit to use the selected storage slot), `format` (`JPG`/`RAW`/`MP4`), `video_length_seconds` |
 | `stop_capture` | `device_name` | — |
 | `capture_image` | `device_name` | `output`, `timeout` |
 
@@ -262,6 +262,7 @@ reCamera Task Progress
 | `Schedule rejected` | Use `Day HH:MM:SS` with three-letter day; `Day 24:00:00` valid. |
 | `set_detection_model` fails: "not installed" | Run `get_detection_models_info` and use one of the returned names/ids. |
 | `detect_local_device` returns null | No `rcisd` daemon is listening on the Unix socket (default `/dev/shm/rcisd.sock`) within 3 s. Start the daemon or pass a different `socket_path`. |
+| `start_capture` rejects `output` with code 30022 | `output` must be an on-device directory under a mounted storage slot (check `get_storage_status.mount_path`). Local paths like `/tmp/...` are **not** valid — omit `output` to use the default slot, then `fetch_file` the result. |
 | `ImportError: recamera_intellisense` | Set `PYTHONPATH="{baseDir}/scripts"` or `cd {baseDir}/scripts` before `python3 -m recamera_intellisense`. |
 
 ## Reference pointers

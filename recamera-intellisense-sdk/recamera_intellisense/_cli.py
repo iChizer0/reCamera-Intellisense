@@ -86,6 +86,31 @@ def _parse_args(raw: str) -> Dict[str, Any]:
     return data
 
 
+def _apply_aliases(name: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize common argument aliases.
+
+    ``list_devices`` emits records keyed by ``name`` (the device's own
+    identifier), while selector commands such as ``get_device`` /
+    ``remove_device`` expect ``device_name``. Agents often forward the
+    list-devices payload verbatim, so transparently rename ``name`` →
+    ``device_name`` when the command's schema accepts ``device_name`` and
+    does not already accept ``name`` (e.g. ``add_device``).
+    """
+    spec = COMMAND_SCHEMAS.get(name)
+    if spec is None:
+        return kwargs
+    allowed = set(spec.get("required", set())) | set(spec.get("optional", set()))
+    if (
+        "name" in kwargs
+        and "device_name" not in kwargs
+        and "device_name" in allowed
+        and "name" not in allowed
+    ):
+        kwargs = dict(kwargs)
+        kwargs["device_name"] = kwargs.pop("name")
+    return kwargs
+
+
 def _validate(name: str, kwargs: Dict[str, Any]) -> None:
     spec = COMMAND_SCHEMAS.get(name)
     if spec is None:
@@ -118,6 +143,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 2
 
     kwargs = _parse_args(raw)
+    kwargs = _apply_aliases(name, kwargs)
     _validate(name, kwargs)
     try:
         result = COMMANDS[name](**kwargs)

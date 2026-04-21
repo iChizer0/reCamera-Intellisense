@@ -473,7 +473,9 @@ pub struct UpdateDeviceParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeviceNameParams {
-    /// Name of the registered device.
+    /// Name of the registered device (also accepted as `name` so
+    /// `list_devices` entries can be forwarded verbatim).
+    #[serde(alias = "name")]
     pub device_name: String,
 }
 
@@ -722,5 +724,15 @@ mod tests {
         roundtrip_str(GpioTriggerSignal::Low, "LOW");
         roundtrip_str(GpioTriggerSignal::Rising, "RISING");
         roundtrip_str(GpioTriggerSignal::Falling, "FALLING");
+    }
+
+    #[test]
+    fn device_name_params_accepts_name_alias() {
+        // Primary form.
+        let p: DeviceNameParams = serde_json::from_str(r#"{"device_name":"cam1"}"#).unwrap();
+        assert_eq!(p.device_name, "cam1");
+        // `list_devices` output can be forwarded verbatim.
+        let p: DeviceNameParams = serde_json::from_str(r#"{"name":"cam1"}"#).unwrap();
+        assert_eq!(p.device_name, "cam1");
     }
 }

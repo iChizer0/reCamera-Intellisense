@@ -46,6 +46,29 @@ def get_capture_status(device_name: str) -> Dict[str, Any]:
     }
 
 
+def _validate_output_dir(output: Optional[str]) -> Optional[str]:
+    """Validate that ``output`` is an absolute on-device directory path.
+
+    ``sOutput`` is the directory on the *camera's* filesystem where the
+    capture is written (the device supplies the file name); it is **not** a
+    local destination. Callers who want the bytes locally should use
+    :func:`capture_image` or fetch the resulting file afterwards.
+    """
+    if output is None:
+        return None
+    if not isinstance(output, str) or not output.strip():
+        raise ValueError("'output' must be a non-empty string.")
+    if "\x00" in output:
+        raise ValueError("'output' must not contain NUL bytes.")
+    if not output.startswith("/"):
+        raise ValueError(
+            f"'output' must be an absolute on-device directory path; got {output!r}. "
+            "Use get_storage_status to find a mount path (e.g. '/mnt/rc_mmcblk0p8/reCamera'), "
+            "or omit 'output' to use the selected storage slot."
+        )
+    return output
+
+
 def start_capture(
     device_name: str,
     *,
@@ -53,7 +76,14 @@ def start_capture(
     format: str = FORMAT_IMAGE,
     video_length_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Start a capture; returns the initial capture event."""
+    """Start a capture; returns the initial capture event.
+
+    ``output`` is an **on-device directory** (not a local path). Omit it to
+    auto-resolve from the currently selected storage slot. The device picks
+    the file name; retrieve the resulting file with :func:`files.fetch_file`
+    using the event's ``output_directory`` + ``file_name``.
+    """
+    output = _validate_output_dir(output)
     dev = _config.resolve(device_name)
     payload: Dict[str, Any] = {
         "sOutput": output or OUTPUT_FALLBACK,
@@ -61,8 +91,22 @@ def start_capture(
     }
     if video_length_seconds is not None:
         payload["iVideoLengthSeconds"] = int(video_length_seconds)
-    resp = _http.post_json(dev, PATH_START, payload=payload)
-    _http.expect_ok(resp, "start capture")
+    try:
+        resp = _http.post_json(dev, PATH_START, payload=payload)
+        _http.expect_ok(resp, "start capture")
+    except RecameraError as exc:
+        # Device rejects paths outside a storage mount (error code 30022).
+        # Re-raise with an actionable hint so agents don't retry blindly.
+        if exc.code == 30022 or "30022" in str(exc):
+            raise RecameraError(
+                f"{exc} Hint: 'output' must be an on-device directory under a "
+                "mounted storage slot (see get_storage_status for mount_path), "
+                "or omit 'output' to use the default.",
+                status=exc.status,
+                code=exc.code,
+                body=exc.body,
+            ) from exc
+        raise
     capture = resp.get("dCapture")
     if not isinstance(capture, dict):
         raise RecameraError("start_capture response missing dCapture field.")

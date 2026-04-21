@@ -1,6 +1,6 @@
 # reCamera Intellisense
 
-AI-powered monitoring and control for [reCamera V2](https://wiki.seeedstudio.com/recamera/) — manage devices, configure object detection, capture images/video, and control GPIO, all through a Rust-based [MCP](https://modelcontextprotocol.io/) server that works with any MCP-compatible agent.
+AI-powered monitoring and control for [reCamera Pro](https://wiki.seeedstudio.com/recamera/) — manage devices, configure object detection, capture images/video, and control GPIO, all through a Rust-based [MCP](https://modelcontextprotocol.io/) server that works with any MCP-compatible agent.
 
 ## Features
 
@@ -14,7 +14,7 @@ For detailed API signatures and CLI schemas, see [API Reference](skills/recamera
 
 ## Installation
 
-**Note: requires an unreleased reCamera V2 hardware with an experimental firmware, stay tuned for the public release!**
+**Note: requires an unreleased reCamera Pro hardware with an experimental firmware, stay tuned for the public release!**
 
 ### Option A — ClawHub (recommended)
 
