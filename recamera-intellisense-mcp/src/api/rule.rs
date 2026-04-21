@@ -224,7 +224,14 @@ pub async fn set_trigger(
     device: &DeviceRecord,
     trigger: &RecordTrigger,
 ) -> Result<()> {
-    let payload = trigger_to_json(trigger)?;
+    // Fetch the current config first so we can preserve sibling sub-objects
+    // that belong to the *other* trigger kinds. Some clients (and the Web
+    // Console) remember their last-known TIMER / GPIO / TTY / INFERENCE_SET
+    // settings and expect them to survive a kind switch. A GET failure is
+    // non-fatal — we fall back to a minimal payload so setting a trigger
+    // still works on a freshly provisioned device.
+    let current = client.get_json(device, PATH_RECORD_RULE, None).await.ok();
+    let payload = merge_trigger_payload(current.as_ref(), trigger)?;
     let resp = client
         .post_json(device, PATH_RECORD_RULE, None, Some(&payload))
         .await?;
@@ -314,19 +321,27 @@ pub fn parse_trigger(data: &Value) -> Result<RecordTrigger> {
     })
 }
 
-pub fn trigger_to_json(trigger: &RecordTrigger) -> Result<Value> {
+/// Keys on `/record-rule-config` that are owned by **one specific** trigger
+/// kind. When switching kinds, we copy forward every such key that the device
+/// already has so other clients' remembered settings survive.
+const TRIGGER_SIBLING_KEYS: &[&str] = &["lInferenceSet", "dTimer", "dGPIO", "dTTY"];
+
+/// Return the `(sCurrentSelected, [(key, value), ...])` patch that fully
+/// describes a trigger. Patch entries overwrite any pre-existing value for
+/// the same key in the current config.
+fn trigger_patch(trigger: &RecordTrigger) -> Result<(&'static str, Vec<(&'static str, Value)>)> {
     Ok(match trigger {
         RecordTrigger::InferenceSet { rules } => {
             let inference_set: Vec<Value> = rules.iter().map(detection_rule_to_json).collect();
-            json!({
-                "sCurrentSelected": "INFERENCE_SET",
-                "lInferenceSet": inference_set,
-            })
+            (
+                "INFERENCE_SET",
+                vec![("lInferenceSet", Value::Array(inference_set))],
+            )
         }
-        RecordTrigger::Timer { interval_seconds } => json!({
-            "sCurrentSelected": "TIMER",
-            "dTimer": { "iIntervalSeconds": interval_seconds },
-        }),
+        RecordTrigger::Timer { interval_seconds } => (
+            "TIMER",
+            vec![("dTimer", json!({ "iIntervalSeconds": interval_seconds }))],
+        ),
         RecordTrigger::Gpio(g) => {
             if g.name.is_none() && g.num.is_none() {
                 bail!("GPIO trigger requires either 'name' or 'num'");
@@ -341,23 +356,54 @@ pub fn trigger_to_json(trigger: &RecordTrigger) -> Result<Value> {
             d.insert("sState".into(), json!(g.state.as_str()));
             d.insert("sSignal".into(), json!(g.signal.as_str()));
             d.insert("iDebounceDurationMs".into(), json!(g.debounce_ms));
-            json!({
-                "sCurrentSelected": "GPIO",
-                "dGPIO": Value::Object(d),
-            })
+            ("GPIO", vec![("dGPIO", Value::Object(d))])
         }
         RecordTrigger::Tty(t) => {
             if t.name.trim().is_empty() || t.command.trim().is_empty() {
                 bail!("TTY trigger requires non-empty 'name' and 'command'");
             }
-            json!({
-                "sCurrentSelected": "TTY",
-                "dTTY": { "sName": t.name, "sCommand": t.command },
-            })
+            (
+                "TTY",
+                vec![("dTTY", json!({ "sName": t.name, "sCommand": t.command }))],
+            )
         }
-        RecordTrigger::Http => json!({ "sCurrentSelected": "HTTP" }),
-        RecordTrigger::AlwaysOn => json!({ "sCurrentSelected": "ALWAYS_ON" }),
+        RecordTrigger::Http => ("HTTP", vec![]),
+        RecordTrigger::AlwaysOn => ("ALWAYS_ON", vec![]),
     })
+}
+
+/// Build the POST payload by starting from a copy of the sibling sub-objects
+/// in `current` (if any) and layering the patch for the requested kind on
+/// top. This is the merge semantics used by [`set_trigger`].
+pub fn merge_trigger_payload(current: Option<&Value>, trigger: &RecordTrigger) -> Result<Value> {
+    let (kind, patch) = trigger_patch(trigger)?;
+    let mut out = serde_json::Map::new();
+
+    // Carry forward the allowlisted sibling sub-objects so they are not lost
+    // when the device persists the new config. Only known keys are copied to
+    // avoid round-tripping server-only metadata.
+    if let Some(obj) = current.and_then(|v| v.as_object()) {
+        for key in TRIGGER_SIBLING_KEYS {
+            if let Some(v) = obj.get(*key) {
+                out.insert((*key).to_string(), v.clone());
+            }
+        }
+    }
+
+    out.insert("sCurrentSelected".into(), Value::String(kind.to_string()));
+    for (k, v) in patch {
+        // Patch values overwrite carried-forward siblings for the selected kind.
+        out.insert(k.to_string(), v);
+    }
+    Ok(Value::Object(out))
+}
+
+/// Backwards-compatible shape: equivalent to [`merge_trigger_payload`] with
+/// no prior config (i.e. a full replace). Retained for tests that exercise
+/// the round-trip against [`parse_trigger`].
+#[cfg(test)]
+pub fn trigger_to_json(trigger: &RecordTrigger) -> Result<Value> {
+    merge_trigger_payload(None, trigger)
 }
 
 fn parse_detection_rule(v: &Value) -> DetectionRule {
@@ -538,5 +584,106 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    /// Simulates a device config that already remembers every trigger kind;
+    /// switching to TIMER must preserve `dGPIO`, `dTTY`, and `lInferenceSet`.
+    fn rich_current() -> Value {
+        json!({
+            "sCurrentSelected": "GPIO",
+            "lInferenceSet": [{
+                "sID": "legacy-rule",
+                "iDebounceTimes": 5,
+                "lConfidenceFilter": [0.4, 1.0],
+                "lClassFilter": ["person"],
+                "lRegionFilter": []
+            }],
+            "dTimer": { "iIntervalSeconds": 120 },
+            "dGPIO": {
+                "sName": "GPIO_07",
+                "sState": "PULL_UP",
+                "sSignal": "FALLING",
+                "iDebounceDurationMs": 50
+            },
+            "dTTY": { "sName": "tty0", "sCommand": "SHOOT" },
+            "bSomeServerOnlyField": true
+        })
+    }
+
+    #[test]
+    fn merge_preserves_other_kinds_when_switching_to_timer() {
+        let current = rich_current();
+        let payload = merge_trigger_payload(
+            Some(&current),
+            &RecordTrigger::Timer {
+                interval_seconds: 30,
+            },
+        )
+        .unwrap();
+        assert_eq!(payload["sCurrentSelected"], "TIMER");
+        // The selected sub-object is overwritten with the new interval.
+        assert_eq!(payload["dTimer"]["iIntervalSeconds"], 30);
+        // Other trigger kinds' sub-objects are preserved verbatim.
+        assert_eq!(payload["dGPIO"]["sName"], "GPIO_07");
+        assert_eq!(payload["dGPIO"]["sState"], "PULL_UP");
+        assert_eq!(payload["dTTY"]["sCommand"], "SHOOT");
+        assert_eq!(payload["lInferenceSet"][0]["sID"], "legacy-rule");
+        // Server-only metadata is NOT round-tripped.
+        assert!(payload.get("bSomeServerOnlyField").is_none());
+    }
+
+    #[test]
+    fn merge_overwrites_only_selected_kind() {
+        let current = rich_current();
+        // Switching to GPIO replaces dGPIO but keeps dTTY / dTimer / lInferenceSet.
+        let payload = merge_trigger_payload(
+            Some(&current),
+            &RecordTrigger::Gpio(GpioTrigger {
+                name: None,
+                num: Some(3),
+                state: GpioTriggerState::PullDown,
+                signal: GpioTriggerSignal::Rising,
+                debounce_ms: 10,
+            }),
+        )
+        .unwrap();
+        assert_eq!(payload["sCurrentSelected"], "GPIO");
+        assert_eq!(payload["dGPIO"]["iNum"], 3);
+        assert_eq!(payload["dGPIO"]["sState"], "PULL_DOWN");
+        // Old dGPIO.sName must be gone since the patch fully replaces dGPIO.
+        assert!(payload["dGPIO"].get("sName").is_none());
+        // Siblings survive.
+        assert_eq!(payload["dTimer"]["iIntervalSeconds"], 120);
+        assert_eq!(payload["dTTY"]["sName"], "tty0");
+        assert_eq!(payload["lInferenceSet"][0]["sID"], "legacy-rule");
+    }
+
+    #[test]
+    fn merge_http_and_always_on_only_flip_tag() {
+        let current = rich_current();
+        let http = merge_trigger_payload(Some(&current), &RecordTrigger::Http).unwrap();
+        assert_eq!(http["sCurrentSelected"], "HTTP");
+        assert_eq!(http["dGPIO"]["sName"], "GPIO_07");
+        assert_eq!(http["dTimer"]["iIntervalSeconds"], 120);
+
+        let always = merge_trigger_payload(Some(&current), &RecordTrigger::AlwaysOn).unwrap();
+        assert_eq!(always["sCurrentSelected"], "ALWAYS_ON");
+        assert_eq!(always["dTTY"]["sCommand"], "SHOOT");
+    }
+
+    #[test]
+    fn merge_without_current_matches_full_replace() {
+        // No prior state → payload contains only the selected kind's keys.
+        let payload = merge_trigger_payload(
+            None,
+            &RecordTrigger::Timer {
+                interval_seconds: 15,
+            },
+        )
+        .unwrap();
+        let obj = payload.as_object().unwrap();
+        assert_eq!(obj.len(), 2);
+        assert_eq!(payload["sCurrentSelected"], "TIMER");
+        assert_eq!(payload["dTimer"]["iIntervalSeconds"], 15);
     }
 }

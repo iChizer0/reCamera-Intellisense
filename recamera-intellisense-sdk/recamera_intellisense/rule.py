@@ -254,27 +254,23 @@ def _validate_confidence_range(rule_name: Any, confidence: List[Any]) -> None:
         )
 
 
-def trigger_to_json(trigger: Dict[str, Any]) -> Dict[str, Any]:
-    """Encode a tagged-union trigger for the device.
+_TRIGGER_SIBLING_KEYS = ("lInferenceSet", "dTimer", "dGPIO", "dTTY")
 
-    Accepted shapes::
 
-        {"kind": "timer", "interval_seconds": 60}
-        {"kind": "gpio", "name": "GPIO_01", "state": "FLOATING", "signal": "RISING", "debounce_ms": 0}
-        {"kind": "inference_set", "rules": [...]}
-        {"kind": "http"} | {"kind": "always_on"}
-        {"kind": "tty", "name": "...", "command": "..."}
+def _trigger_patch(trigger: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    """Return ``(sCurrentSelected, {key: value, ...})`` for *trigger*.
+
+    The patch dict contains only the sub-object(s) owned by the selected
+    kind. HTTP / ALWAYS_ON return an empty patch — they just flip the tag.
     """
     kind = str(trigger.get("kind", "")).lower()
     if kind == "inference_set":
         rules = trigger.get("rules") or []
-        return {
-            "sCurrentSelected": "INFERENCE_SET",
+        return "INFERENCE_SET", {
             "lInferenceSet": [_detection_rule_to_json(r) for r in rules],
         }
     if kind == "timer":
-        return {
-            "sCurrentSelected": "TIMER",
+        return "TIMER", {
             "dTimer": {"iIntervalSeconds": int(trigger.get("interval_seconds", 0))},
         }
     if kind == "gpio":
@@ -290,24 +286,77 @@ def trigger_to_json(trigger: Dict[str, Any]) -> Dict[str, Any]:
         gpio["sState"] = str(trigger.get("state", "FLOATING"))
         gpio["sSignal"] = str(trigger.get("signal", "RISING"))
         gpio["iDebounceDurationMs"] = int(trigger.get("debounce_ms", 0))
-        return {"sCurrentSelected": "GPIO", "dGPIO": gpio}
+        return "GPIO", {"dGPIO": gpio}
     if kind == "tty":
         name = str(trigger.get("name", "")).strip()
         command = str(trigger.get("command", "")).strip()
         if not name or not command:
             raise ValueError("TTY trigger requires non-empty 'name' and 'command'.")
-        return {"sCurrentSelected": "TTY", "dTTY": {"sName": name, "sCommand": command}}
+        return "TTY", {"dTTY": {"sName": name, "sCommand": command}}
     if kind == "http":
-        return {"sCurrentSelected": "HTTP"}
+        return "HTTP", {}
     if kind == "always_on":
-        return {"sCurrentSelected": "ALWAYS_ON"}
+        return "ALWAYS_ON", {}
     raise ValueError(f"Unknown trigger kind {kind!r}")
 
 
+def _merge_trigger_payload(
+    current: Optional[Dict[str, Any]], trigger: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Layer the *trigger* patch on top of *current* config sibling fields.
+
+    Other trigger kinds' remembered sub-objects (e.g. ``dGPIO`` when switching
+    to ``inference_set``) are copied forward so other clients — and later
+    switches back — don't lose state. Only allowlisted keys are carried to
+    avoid round-tripping server-only metadata.
+    """
+    kind, patch = _trigger_patch(trigger)
+    out: Dict[str, Any] = {}
+    if isinstance(current, dict):
+        for key in _TRIGGER_SIBLING_KEYS:
+            if key in current:
+                out[key] = current[key]
+    out["sCurrentSelected"] = kind
+    out.update(patch)
+    return out
+
+
+def trigger_to_json(trigger: Dict[str, Any]) -> Dict[str, Any]:
+    """Encode a tagged-union trigger as a standalone full-replace payload.
+
+    Accepted shapes::
+
+        {"kind": "timer", "interval_seconds": 60}
+        {"kind": "gpio", "name": "GPIO_01", "state": "FLOATING", "signal": "RISING", "debounce_ms": 0}
+        {"kind": "inference_set", "rules": [...]}
+        {"kind": "http"} | {"kind": "always_on"}
+        {"kind": "tty", "name": "...", "command": "..."}
+
+    Prefer :func:`set_record_trigger`, which performs a read-modify-write so
+    other trigger kinds' remembered settings survive a kind switch.
+    """
+    return _merge_trigger_payload(None, trigger)
+
+
 def set_record_trigger(device_name: str, trigger: Dict[str, Any]) -> None:
-    """Install *trigger* (see :func:`trigger_to_json` for accepted shapes)."""
+    """Install *trigger* while preserving other kinds' remembered settings.
+
+    Fetches the current ``record-rule-config``, copies the sibling sub-objects
+    (``lInferenceSet``, ``dTimer``, ``dGPIO``, ``dTTY``) forward, overwrites
+    only ``sCurrentSelected`` and the sub-object for the selected kind, then
+    POSTs. A GET failure degrades gracefully to a full-replace payload so
+    this still works on a freshly provisioned device.
+
+    See :func:`trigger_to_json` for accepted trigger shapes.
+    """
     dev = _config.resolve(device_name)
-    payload = trigger_to_json(trigger)
+    try:
+        current = _http.get_json(dev, PATH_RECORD_RULE)
+    except Exception:
+        current = None
+    payload = _merge_trigger_payload(
+        current if isinstance(current, dict) else None, trigger
+    )
     resp = _http.post_json(dev, PATH_RECORD_RULE, payload=payload)
     _http.expect_ok(resp, "set record trigger")
 
