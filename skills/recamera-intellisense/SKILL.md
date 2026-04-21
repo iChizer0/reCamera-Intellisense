@@ -26,10 +26,13 @@ Drive one or more [reCamera Pro (Pending Release)](https://wiki.seeedstudio.com/
 
 ## Security
 
-- **Tokens are long-lived bearer credentials** — do not commit `~/.recamera/devices.json`, and avoid logging the `token` field.
-- **HTTP is the default transport.** On untrusted networks, provision HTTPS on the device and register with `"protocol":"https"`. Use `"allow_unsecured": true` only for LANs with self-signed certs.
+- **Tokens are long-lived bearer credentials** — do not commit `~/.recamera/devices.json` (auto-created `chmod 600`), and avoid logging the `token` field.
+- **Same-origin redirect enforcement** — the HTTP client refuses to follow any 3xx redirect whose `(scheme, host, port)` differs from the registered device, so the bearer token is never forwarded to an unexpected origin (SSRF-safe).
+- **Secure-by-default TLS** — HTTPS devices validate the certificate chain unless you explicitly register with `"allow_unsecured": true` (intended for self-signed LAN certs; do not use on the public Internet).
+- **HTTP is the default transport.** On untrusted networks, provision HTTPS on the device and register with `"protocol":"https"` plus a trusted cert.
+- **Path hygiene** — `fetch_file` / `delete_file` reject non-absolute paths, `..` traversal segments, and NUL bytes client-side; the daemon additionally enforces an allowlist.
 - **Scope of trust**: this skill reads and writes files on the camera (captures, events), controls GPIO, and can format storage. Only point it at hardware you own.
-- **Source review encouraged** — the full SDK is under `scripts/recamera_intellisense/`; every command is a short Python function.
+- **Source review encouraged** — the full SDK is under `scripts/recamera_intellisense/`; every command is a short, stdlib-only Python function.
 
 ## Invocation
 

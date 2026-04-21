@@ -50,9 +50,28 @@ def _auth_headers(device: DeviceRecord) -> dict[str, str]:
 
 
 def _ssl_context(device: DeviceRecord):
-    if device.get("protocol") == "https" and device.get("allow_unsecured", True):
+    if device.get("protocol") == "https" and device.get("allow_unsecured", False):
         return _INSECURE_SSL
     return None
+
+
+def _device_origin(device: DeviceRecord) -> Tuple[str, str, int]:
+    """Return the (scheme, lowercase host, port) tuple of the registered device.
+
+    Used to enforce same-origin redirects so we never send the bearer token to
+    a host we didn't register.
+    """
+    scheme = (device.get("protocol") or "http").lower()
+    host = (device.get("host") or "").strip().lower()
+    try:
+        socket.inet_pton(socket.AF_INET6, host)
+    except OSError:
+        # Already a hostname / IPv4 literal; leave as-is.
+        pass
+    port = device.get("port")
+    if not port:
+        port = 443 if scheme == "https" else 80
+    return scheme, host, int(port)
 
 
 def _raise_for_http(
@@ -97,7 +116,13 @@ def _request(
     content_type: Optional[str] = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> Tuple[bytes, str]:
-    """One HTTP round-trip. Manually follows 3xx up to 5 hops (urllib won't forward 307 POSTs)."""
+    """One HTTP round-trip. Follows 3xx up to 5 hops **only** when each redirect
+    target stays on the same (scheme, host, port) as the registered device.
+
+    Cross-origin redirects are refused to prevent leaking the bearer token or
+    turning the SDK into an SSRF gadget; urllib also won't forward 307 POSTs,
+    which is why we handle redirects explicitly.
+    """
     url = api_url(device, endpoint, params)
     headers = dict(_auth_headers(device))
     if content_type is not None:
@@ -106,8 +131,9 @@ def _request(
     cur_body = body
     ctx = _ssl_context(device)
     insecure_ctx_fallback = None
-    if ctx is None and device.get("allow_unsecured", True):
+    if ctx is None and device.get("allow_unsecured", False):
         insecure_ctx_fallback = _INSECURE_SSL
+    origin = _device_origin(device)
 
     max_hops = 5
     for hop in range(max_hops + 1):
@@ -132,6 +158,17 @@ def _request(
                         f"{method} {endpoint} redirect missing Location header"
                     )
                 url = urllib.parse.urljoin(url, location)
+                # Refuse to follow the redirect if it points at a different
+                # (scheme, host, port). Forwarding the Authorization header to
+                # an unexpected origin would leak the long-lived bearer token.
+                next_scheme, next_host, next_port, _ = _split(url)
+                next_origin = (next_scheme.lower(), next_host.lower(), int(next_port))
+                if next_origin != origin:
+                    raise RecameraError(
+                        f"{method} {endpoint} refused cross-origin redirect to "
+                        f"{next_origin[0]}://{next_origin[1]}:{next_origin[2]} "
+                        f"(registered device is {origin[0]}://{origin[1]}:{origin[2]})."
+                    )
                 if status == 303:
                     cur_method = "GET"
                     cur_body = None

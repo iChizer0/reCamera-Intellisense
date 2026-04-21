@@ -22,6 +22,26 @@ _MAX_INLINE_BYTES = 5 * 1024 * 1024
 _IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 
+def _validate_absolute_path(path: Any) -> str:
+    """Reject obviously unsafe inputs before sending them to the daemon.
+
+    The daemon enforces its own allowlist, but validating here catches
+    typos, accidental path traversal (``..``), NUL-byte injection into the
+    query string, and non-absolute paths with a clearer error.
+    """
+    if not isinstance(path, str) or not path:
+        raise ValueError("'path' must be a non-empty string.")
+    if "\x00" in path:
+        raise ValueError("'path' must not contain NUL bytes.")
+    if not path.startswith("/"):
+        raise ValueError(f"'path' must be an absolute (POSIX) path; got {path!r}.")
+    # Normalize and ensure no traversal escapes the absolute root.
+    segments = [s for s in path.split("/") if s not in ("", ".")]
+    if any(s == ".." for s in segments):
+        raise ValueError(f"'path' must not contain '..' segments; got {path!r}.")
+    return path
+
+
 def fetch_file(
     device_name: str,
     *,
@@ -34,6 +54,7 @@ def fetch_file(
     Returns inline base64 for images / payloads ≤ ``max_inline_bytes``.
     When ``raw=True``, returns the raw ``bytes`` (useful for pipelines).
     """
+    path = _validate_absolute_path(path)
     dev = _config.resolve(device_name)
     body, ct = _http.get_bytes(dev, PATH_FILE, params={"path": path})
     if raw:
@@ -57,6 +78,7 @@ def fetch_file(
 
 def delete_file(device_name: str, *, path: str) -> None:
     """Delete an on-device file via the daemon."""
+    path = _validate_absolute_path(path)
     dev = _config.resolve(device_name)
     _http.delete(dev, PATH_FILE, params={"path": path})
 
