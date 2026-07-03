@@ -1,18 +1,27 @@
 """Storage relay lifecycle + per-process UUID cache (serves record files via nginx autoindex).
 
-This module is **internal**: the relay is an implementation detail of ``records`` and
-``files`` (where it is opened/refreshed lazily). It is intentionally not exposed via the
+This module is **internal**: the relay is an implementation detail of `records` and
+`files` (where it is opened/refreshed lazily). It is intentionally not exposed via the
 MCP tool surface or the SDK's public CLI command set. Import from Python is still
 supported for advanced users who need direct relay control.
 """
 
 from __future__ import annotations
 
+if __name__ == "__main__" and __package__ is None:
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from recamera_intellisense._cli import main
+
+    raise SystemExit(main())
+
 import threading
 from typing import Any, Dict, Optional
 
 from . import _config, _http
-from .storage import PATH_CONTROL, DEFAULT_INTERNAL_DEV_PATH, get_storage_status
+from .storage import DEFAULT_INTERNAL_DEV_PATH, PATH_CONTROL, get_storage_status
 
 __all__ = [
     "open_relay",
@@ -60,7 +69,7 @@ def resolve_slot_dev_path(device_name: str, dev_path: Optional[str] = None) -> s
 
 
 def open_relay(device_name: str, *, dev_path: Optional[str] = None) -> Dict[str, Any]:
-    """Open (or refresh) the relay directory; returns ``{uuid, timeout, timeout_remain}``."""
+    """Open (or refresh) the relay directory; returns `{uuid, timeout, timeout_remain}`."""
     dev = _config.resolve(device_name)
     resolved = resolve_slot_dev_path(device_name, dev_path)
     resp = _relay_call(dev, "RELAY", resolved)
@@ -114,7 +123,7 @@ def _cache_evict(device_name: str, dev_path: str) -> None:
 def ensure_relay_uuid(
     device_name: str, dev_path: Optional[str] = None
 ) -> tuple[str, str]:
-    """Return ``(dev_path, uuid)`` for an active relay, opening/renewing one as needed."""
+    """Return `(dev_path, uuid)` for an active relay, opening/renewing one as needed."""
     resolved = resolve_slot_dev_path(device_name, dev_path)
     cached = _cache_get(device_name, resolved)
     if cached:
@@ -130,7 +139,7 @@ def ensure_relay_uuid(
 
 
 def build_relay_url(device_name: str, uuid: str, rel_path: str = "") -> str:
-    """Construct a direct ``<base>/storage/relay/{uuid}/{rel}`` URL."""
+    """Construct a direct `<base>/storage/relay/{uuid}/{rel}` URL."""
     dev = _config.resolve(device_name)
     rel = rel_path.lstrip("/")
     endpoint = f"/storage/relay/{uuid}/" if not rel else f"/storage/relay/{uuid}/{rel}"

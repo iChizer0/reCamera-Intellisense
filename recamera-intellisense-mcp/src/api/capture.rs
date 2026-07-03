@@ -12,7 +12,7 @@ const PATH_START: &str = "/cgi-bin/entry.cgi/record/capture/start";
 const PATH_STOP: &str = "/cgi-bin/entry.cgi/record/capture/stop";
 
 pub const FORMAT_IMAGE: &str = "JPG";
-pub const OUTPUT_FALLBACK: &str = "/mnt/rc_mmcblk0p8/reCamera";
+pub const OUTPUT_FALLBACK: &str = "/mnt/rc_mmcblk0p8/DCIM/100RECAM";
 const POLL_INTERVAL_MS: u64 = 500;
 const TIMEOUT_SECS: u64 = 5;
 const TERMINAL_STATUSES: &[&str] = &["COMPLETED", "FAILED", "INTERRUPTED", "CANCELED"];

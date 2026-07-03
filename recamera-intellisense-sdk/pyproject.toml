@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "recamera-intellisense"
 version = "2.0.0"
-description = "Stdlib-only Python SDK for reCamera V2 (device control, detection, capture, storage, GPIO)."
+description = "Stdlib-only Python SDK for reCamera Pro (device control, detection, capture, storage, GPIO)."
 requires-python = ">=3.9"
 authors = [{ name = "reCamera Intellisense" }]
 license = { text = "MIT" }

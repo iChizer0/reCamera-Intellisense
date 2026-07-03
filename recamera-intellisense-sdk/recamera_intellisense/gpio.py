@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+if __name__ == "__main__" and __package__ is None:
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from recamera_intellisense._cli import main
+
+    raise SystemExit(main())
+
 from typing import Any, Dict, List, Optional
 
 from . import _config, _http
@@ -121,7 +130,7 @@ def get_gpio_value(
 
     Reconfigures the pin as a floating input first if it is not already in an
     input state — this has the side effect of changing the pin's direction.
-    When ``debounce_ms > 0`` and the current edge is ``none``, the SDK also
+    When `debounce_ms > 0` and the current edge is `none`, the SDK also
     enables both-edge detection (the device rejects debounce with edge=none).
     """
     dev = _config.resolve(device_name)

@@ -46,7 +46,10 @@ def api_url(
 
 
 def _auth_headers(device: DeviceRecord) -> dict[str, str]:
-    return {"Authorization": device["token"]}
+    token = device.get("token", "")
+    if token:
+        return {"Authorization": token}
+    return {}
 
 
 def _ssl_context(device: DeviceRecord):
@@ -208,7 +211,7 @@ def get_bytes(
     *,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> Tuple[bytes, str]:
-    """Binary GET; returns ``(body, content_type)``."""
+    """Binary GET; returns `(body, content_type)`."""
     return _request(device, endpoint, method="GET", params=params, timeout=timeout)
 
 
@@ -267,7 +270,7 @@ def delete(
 
 
 def expect_ok(resp: Any, context: str) -> None:
-    """Enforce the ``code == 0`` contract for Record API POSTs."""
+    """Enforce the `code == 0` contract for Record API POSTs."""
     if not isinstance(resp, dict):
         return
     code = resp.get("code")

@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+if __name__ == "__main__" and __package__ is None:
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from recamera_intellisense._cli import main
+
+    raise SystemExit(main())
+
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from . import rule as _rule
 from . import files as _files
+from . import rule as _rule
 from . import storage as _storage
 
 __all__ = [
@@ -30,15 +39,15 @@ def set_detection_schedule(
 ) -> None:
     """Alias for :func:`rule.set_schedule_rule`.
 
-    ``schedule`` defaults to ``None`` (meaning "always active"), so omitting
-    the key from the CLI payload is equivalent to passing ``schedule: []``
-    or ``schedule: null`` and clears any existing window.
+    `schedule` defaults to `None` (meaning "always active"), so omitting
+    the key from the CLI payload is equivalent to passing `schedule: []`
+    or `schedule: null` and clears any existing window.
     """
     _rule.set_schedule_rule(device_name, schedule)
 
 
 def get_detection_rules(device_name: str) -> List[Dict[str, Any]]:
-    """Active INFERENCE_SET rules, or ``[]`` when the trigger is not INFERENCE_SET."""
+    """Active INFERENCE_SET rules, or `[]` when the trigger is not INFERENCE_SET."""
     trigger = _rule.get_record_trigger(device_name)
     if trigger["kind"] != "inference_set":
         return []
@@ -55,8 +64,8 @@ def set_detection_rules(
     """Install an INFERENCE_SET trigger with *rules*.
 
     Also (by default):
-      * enables the rule pipeline with JPG writer (``ensure_writer=True``);
-      * ensures a storage slot is available (``ensure_storage=True``).
+      * enables the rule pipeline with JPG writer (`ensure_writer=True`);
+      * ensures a storage slot is available (`ensure_storage=True`).
     """
     if not isinstance(rules, list):
         raise ValueError("'rules' must be a list of detection-rule dicts.")
@@ -86,8 +95,8 @@ def get_detection_events(
 ) -> List[Dict[str, Any]]:
     """Normalized detection events, shape-compatible with the MCP server.
 
-    Each event is ``{timestamp, timestamp_unix_ms, rule_name, snapshot_path?}`` where
-    ``timestamp`` is an ISO-8601 UTC string. Use :func:`files.get_intellisense_events`
+    Each event is `{timestamp, timestamp_unix_ms, rule_name, snapshot_path?}` where
+    `timestamp` is an ISO-8601 UTC string. Use :func:`files.get_intellisense_events`
     to access the raw daemon payloads instead.
     """
     raw = _files.get_intellisense_events(

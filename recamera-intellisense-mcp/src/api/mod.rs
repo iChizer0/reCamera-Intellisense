@@ -1,6 +1,7 @@
 // MARK: Low-level HTTP bindings to the reCamera Record / Model / GPIO APIs.
 // Each submodule owns one API family; all HTTP calls go through `api_client`.
 
+pub mod acoustic;
 pub mod capture;
 pub mod daemon;
 pub mod gpio;

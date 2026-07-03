@@ -277,11 +277,11 @@ def find_asset(release: dict, target: PlatformTarget) -> tuple[str, str]:
 
 
 def find_checksum_url(release: dict, asset_name: str) -> str | None:
-    """Locate a published SHA-256 digest for ``asset_name``.
+    """Locate a published SHA-256 digest for `asset_name`.
 
-    Looks for (in order): ``<asset>.sha256``, ``<asset>.sha256sum``,
-    ``SHA256SUMS``, ``checksums.txt``. Returns the asset download URL
-    or ``None`` if no recognised digest asset exists in the release.
+    Looks for (in order): `<asset>.sha256`, `<asset>.sha256sum`,
+    `SHA256SUMS`, `checksums.txt`. Returns the asset download URL
+    or `None` if no recognised digest asset exists in the release.
     """
     assets = release.get("assets", [])
     by_name = {a.get("name", ""): a for a in assets}
@@ -379,13 +379,13 @@ def _fetch_text(
 
 
 def _parse_checksum(text: str, asset_name: str) -> str | None:
-    """Extract a lowercase hex SHA-256 digest for ``asset_name``.
+    """Extract a lowercase hex SHA-256 digest for `asset_name`.
 
-    Supports both single-line ``sha256sum``-style files (``<hex>  <name>``)
-    and a bare hex digest. Returns ``None`` if no matching line is present.
+    Supports both single-line `sha256sum`-style files (`<hex>  <name>`)
+    and a bare hex digest. Returns `None` if no matching line is present.
     """
     stripped = text.strip()
-    # Bare digest (``<asset>.sha256`` convention: a single 64-char hex token).
+    # Bare digest (`<asset>.sha256` convention: a single 64-char hex token).
     tokens = stripped.split()
     first_token = tokens[0].lstrip("\ufeff") if tokens else ""
     if len(tokens) == 1 and len(first_token) == 64:
@@ -402,7 +402,7 @@ def _parse_checksum(text: str, asset_name: str) -> str | None:
         if len(parts) < 2:
             continue
         digest = parts[0].lstrip("\ufeff").lstrip("*").lower()
-        # sha256sum uses ``*name`` for binary mode, ``name`` for text.
+        # sha256sum uses `*name` for binary mode, `name` for text.
         name = parts[-1].lstrip("*")
         if len(digest) == 64 and name == asset_name:
             try:
@@ -424,13 +424,13 @@ def _sha256_of(path: Path) -> str:
 def verify_checksum(
     archive: Path, asset_name: str, checksum_url: str | None, *, skip: bool
 ) -> None:
-    """Enforce integrity of ``archive`` against the release's SHA-256 digest.
+    """Enforce integrity of `archive` against the release's SHA-256 digest.
 
     Fail-closed policy:
       * If a checksum asset is published and we can parse a digest for
-        ``asset_name``, the archive must match — otherwise abort.
+        `asset_name`, the archive must match — otherwise abort.
       * If no checksum asset is published, abort unless the caller passed
-        ``--skip-checksum`` (or ``RECAMERA_SKIP_CHECKSUM=1``); in that case
+        `--skip-checksum` (or `RECAMERA_SKIP_CHECKSUM=1`); in that case
         we warn loudly and continue.
     """
     actual = _sha256_of(archive)

@@ -3,9 +3,10 @@
 Usage::
 
     python3 -m recamera_intellisense <command> ['<json-args>']
+    python3 /path/to/recamera_intellisense/_cli.py <command> ['<json-args>']
     recamera <command> ['<json-args>']
 
-JSON args are a single object whose keys match the function keyword arguments.
+JSON args are a single object whose keys match the function's keyword arguments.
 Results print as pretty JSON; errors exit non-zero with the message on stderr.
 """
 
@@ -15,19 +16,40 @@ import json
 import sys
 from typing import Any, Callable, Dict, Iterable, Tuple
 
-from . import (
-    capture,
-    detection,
-    device,
-    files,
-    gpio,
-    model,
-    records,
-    relay,
-    rule,
-    storage,
-)
-from ._errors import RecameraError
+if __name__ == "__main__" and __package__ is None:
+    # Direct execution: make absolute imports work like `python3 -m`.
+    import os
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from recamera_intellisense import (
+        acoustic,
+        capture,
+        detection,
+        device,
+        files,
+        gpio,
+        model,
+        records,
+        relay,
+        rule,
+        storage,
+    )
+    from recamera_intellisense._errors import RecameraError
+else:
+    from . import (
+        acoustic,
+        capture,
+        detection,
+        device,
+        files,
+        gpio,
+        model,
+        records,
+        relay,
+        rule,
+        storage,
+    )
+    from ._errors import RecameraError
 
 _MODULES = (
     device,
@@ -38,6 +60,7 @@ _MODULES = (
     capture,
     gpio,
     model,
+    acoustic,
     detection,
     files,
 )
@@ -89,12 +112,12 @@ def _parse_args(raw: str) -> Dict[str, Any]:
 def _apply_aliases(name: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize common argument aliases.
 
-    ``list_devices`` emits records keyed by ``name`` (the device's own
-    identifier), while selector commands such as ``get_device`` /
-    ``remove_device`` expect ``device_name``. Agents often forward the
-    list-devices payload verbatim, so transparently rename ``name`` →
-    ``device_name`` when the command's schema accepts ``device_name`` and
-    does not already accept ``name`` (e.g. ``add_device``).
+    `list_devices` emits records keyed by `name` (the device's own
+    identifier), while selector commands such as `get_device` /
+    `remove_device` expect `device_name`. Agents often forward the
+    list-devices payload verbatim, so transparently rename `name` →
+    `device_name` when the command's schema accepts `device_name` and
+    does not already accept `name` (e.g. `add_device`).
     """
     spec = COMMAND_SCHEMAS.get(name)
     if spec is None:

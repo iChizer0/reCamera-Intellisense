@@ -166,6 +166,20 @@ pub struct DetectionModel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AcousticModel {
+    /// Runtime head ID of the active sound-event model.
+    pub runtime_head_id: String,
+    /// Class labels the model can emit (use for SED `label_filter`).
+    pub labels: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub n_classes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScheduleRange {
     /// Start in "Day HH:MM:SS" format (e.g. "Mon 08:00:00").
     pub start: String,
@@ -288,6 +302,20 @@ pub enum RecordTrigger {
     Http,
     /// Continuous re-arm using writer interval pacing.
     AlwaysOn,
+    /// Sound-event detection trigger.
+    Sed(SedTrigger),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SedTrigger {
+    /// Acoustic model ID filter. Empty string accepts the currently active model.
+    pub model_id: String,
+    /// Consecutive activity window required to fire, in milliseconds (0..=60000).
+    pub consecutive_window_ms: u64,
+    /// [min, max] confidence in [0.0, 1.0].
+    pub confidence_range_filter: Vec<f64>,
+    /// Class labels to match (empty = any). Use labels from `get_active_acoustic_model`.
+    pub label_filter: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -450,7 +478,10 @@ pub struct AddDeviceParams {
     pub name: String,
     /// Device host (IP or hostname).
     pub host: String,
-    /// Auth token (format: sk_...).
+    /// Auth token. Leave empty for local/trusted devices that do not require
+    /// authentication (e.g. a local `rcisd` daemon). For remote devices, use the
+    /// token shown in the Web Console (older firmware uses `sk_...`, newer
+    /// firmware may issue arbitrary non-whitespace tokens).
     pub token: String,
     /// Transport protocol (default: http).
     pub protocol: Option<Protocol>,

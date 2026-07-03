@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+if __name__ == "__main__" and __package__ is None:
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from recamera_intellisense._cli import main
+
+    raise SystemExit(main())
+
 import http.client
 import os
 import socket
@@ -30,7 +39,7 @@ _LOCAL_DAEMON_SOCKET = "/dev/shm/rcisd.sock"
 def _probe(
     host: str, port: int, token: Optional[str], use_tls: bool, allow_unsecured: bool
 ) -> Optional[str]:
-    """Return ``None`` on success or a human-readable error otherwise."""
+    """Return `None` on success or a human-readable error otherwise."""
     try:
         connect_host = host.strip()
         if use_tls:
@@ -68,12 +77,12 @@ def _probe(
 
 
 def detect_local_device(socket_path: str = _LOCAL_DAEMON_SOCKET) -> Optional[str]:
-    """Return *socket_path* if a local ``rcisd`` daemon accepts a Unix-socket
-    connection there, else ``None``.
+    """Return *socket_path* if a local `rcisd` daemon accepts a Unix-socket
+    connection there, else `None`.
 
     The daemon serves its HTTP API over a Unix domain socket (default
-    ``/dev/shm/rcisd.sock``); it does not listen on TCP. This mirrors the MCP
-    server's ``detect_local_device`` tool.
+    `/dev/shm/rcisd.sock`); it does not listen on TCP. This mirrors the MCP
+    server's `detect_local_device` tool.
     """
     if not socket_path or not hasattr(socket, "AF_UNIX"):
         return None
@@ -101,9 +110,8 @@ def add_device(
 ) -> DeviceRecord:
     """Register a new device; fails if *name* already exists. Connectivity is probed first.
 
-    ``allow_unsecured`` defaults to ``False``: HTTPS connections require a trusted
-    certificate chain. Pass ``allow_unsecured=True`` only for self-signed certs on
-    a trusted network.
+    `token` may be empty for local/trusted devices. `allow_unsecured=True`
+    is required for local HTTPS devices that use self-signed certificates.
     """
     _config.validate_name(name)
     _config.validate_host(host)
@@ -188,7 +196,7 @@ def update_device(
 
 
 def remove_device(device_name: str) -> bool:
-    """Delete *device_name*; returns ``True`` if something was removed."""
+    """Delete *device_name*; returns `True` if something was removed."""
     _config.validate_name(device_name)
     devices = _config.load_all()
     if device_name not in devices:
@@ -199,7 +207,7 @@ def remove_device(device_name: str) -> bool:
 
 
 def get_device(device_name: str) -> Optional[DeviceRecord]:
-    """Return the profile for *device_name*, or ``None``."""
+    """Return the profile for *device_name*, or `None`."""
     _config.validate_name(device_name)
     devices = _config.load_all()
     if device_name not in devices:

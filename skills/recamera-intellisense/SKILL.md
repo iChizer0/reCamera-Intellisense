@@ -1,6 +1,6 @@
 ---
 name: recamera-intellisense
-description: Register and control reCamera Pro devices from an agent — onboard cameras, pick AI detection models by name, configure rule-based triggers (AI / timer / GPIO / TTY / HTTP / always-on), poll detection events with snapshots, capture JPG/RAW/MP4 on demand, browse recorded clips, manage storage, and drive GPIO pins. Uses a bundled stdlib-only Python SDK invoked via a single JSON argument per command. Trigger this skill whenever the user mentions reCamera, camera onboarding, object/person detection, event polling, snapshot or video capture, recording rules, on-device GPIO, or asks to wire a physical camera into an agent workflow — even when they don't name the product explicitly.
+description: Register and control reCamera Pro devices from an agent — onboard cameras, pick AI detection models by name, configure rule-based triggers (AI / timer / GPIO / TTY / HTTP / always-on / sound-event), poll detection events with snapshots, capture JPG/RAW/MP4 on demand, browse recorded clips, manage storage, and drive GPIO pins. Uses a bundled stdlib-only Python SDK invoked via a single JSON argument per command. Trigger this skill whenever the user mentions reCamera, camera onboarding, object/person detection, sound event detection, event polling, snapshot or video capture, recording rules, on-device GPIO, or asks to wire a physical camera into an agent workflow — even when they don't name the product explicitly.
 metadata: {
   "openclaw": {
     "emoji": "📷",
@@ -15,20 +15,20 @@ user-invocable: true
 
 # reCamera Intellisense
 
-Drive one or more [reCamera Pro (Pending Release)](https://wiki.seeedstudio.com/recamera/) devices: device registration, AI detection configuration, rule-based recording, event polling, on-demand capture, storage/records management, and GPIO control. The skill bundles a Python SDK (`scripts/recamera_intellisense/`) that is the **single source of truth** for every command's parameters; the same package backs the MCP server, so CLI and MCP schemas are identical.
+Drive one or more [reCamera Pro (Pending Release)](https://wiki.seeedstudio.com/recamera/) devices: device registration, AI detection configuration, sound-event detection, rule-based recording, event polling, on-demand capture, storage/records management, and GPIO control. The skill bundles a Python SDK (`scripts/recamera_intellisense/`) that is the **single source of truth** for every command's parameters; the same package backs the MCP server, so CLI and MCP schemas are identical.
 
 ## Requirements
 
 - `python3` ≥ 3.9 (stdlib only — no `pip install` needed)
 - Reachable reCamera HTTP/HTTPS API (default TCP `80`/`443`) **or** a local `rcisd` daemon serving HTTP over the Unix socket `/dev/shm/rcisd.sock`
-- Per-device auth token in the form `sk_<chars>` (Web Console → Device Info → Connection Settings → HTTP/HTTPS)
+- Per-device auth token (Web Console → Device Info → Connection Settings → HTTP/HTTPS). **Local devices** (e.g. a local `rcisd` daemon) may not require a token — pass an empty string.
 - Credential store at `~/.recamera/devices.json` (auto-created, chmod `600`). Shared with the MCP server if installed.
 
 ## Security
 
 - **Tokens are long-lived bearer credentials** — do not commit `~/.recamera/devices.json` (auto-created `chmod 600`), and avoid logging the `token` field.
 - **Same-origin redirect enforcement** — the HTTP client refuses to follow any 3xx redirect whose `(scheme, host, port)` differs from the registered device, so the bearer token is never forwarded to an unexpected origin (SSRF-safe).
-- **Secure-by-default TLS** — HTTPS devices validate the certificate chain unless you explicitly register with `"allow_unsecured": true` (intended for self-signed LAN certs; do not use on the public Internet).
+- **Secure-by-default TLS** — HTTPS devices validate the certificate chain unless you explicitly register with `"allow_unsecured": true` (intended for self-signed LAN certs; do not use on the public Internet). **Local HTTPS devices always use self-signed certificates**, so register them with `"protocol":"https"` and `"allow_unsecured":true`.
 - **HTTP is the default transport.** On untrusted networks, provision HTTPS on the device and register with `"protocol":"https"` plus a trusted cert.
 - **Path hygiene** — `fetch_file` / `delete_file` reject non-absolute paths, `..` traversal segments, and NUL bytes client-side; the daemon additionally enforces an allowlist.
 - **Scope of trust**: this skill reads and writes files on the camera (captures, events), controls GPIO, and can format storage. Only point it at hardware you own.
@@ -39,8 +39,11 @@ Drive one or more [reCamera Pro (Pending Release)](https://wiki.seeedstudio.com/
 The bundled SDK runs without installation. From `{baseDir}` (the skill root):
 
 ```bash
-# One-shot
+# One-shot (recommended)
 PYTHONPATH="{baseDir}/scripts" python3 -m recamera_intellisense <command> '<json>'
+
+# One-shot without -m (also works)
+PYTHONPATH="{baseDir}/scripts" python3 {baseDir}/scripts/recamera_intellisense/_cli.py <command> '<json>'
 
 # Convenience alias for a session
 export PYTHONPATH="{baseDir}/scripts"
@@ -74,8 +77,8 @@ All commands accept `device_name` (string) unless noted. `device_name` resolves 
 | Command | Required | Optional |
 |---|---|---|
 | `detect_local_device` | — | `socket_path` (default `/dev/shm/rcisd.sock`) |
-| `add_device` | `name`, `host`, `token` | `protocol` (`http`/`https`), `allow_unsecured`, `port` |
-| `update_device` | `device_name` | any of `host`, `token`, `protocol`, `allow_unsecured`, `port` |
+| `add_device` | `name`, `host`, `token` (empty for local devices) | `protocol` (`http`/`https`), `allow_unsecured`, `port` |
+| `update_device` | `device_name` | any of `host`, `token` (empty for local devices), `protocol`, `allow_unsecured`, `port` |
 | `remove_device` / `get_device` | `device_name` | — |
 | `list_devices` | — | — |
 
@@ -93,10 +96,17 @@ All commands accept `device_name` (string) unless noted. `device_name` resolves 
 | `get_detection_events` | `device_name` | `start_unix_ms`, `end_unix_ms` (inclusive) |
 | `clear_detection_events` | `device_name` | — |
 
+### Acoustic (sound-event detection)
+| Command | Required | Optional |
+|---|---|---|
+| `get_active_acoustic_model` | `device_name` | — |
+
+Use this to discover labels for the `sed` record trigger.
+
 `set_detection_rules` installs an `inference_set` record trigger and, by default, enables the rule pipeline with a JPG writer and a ready storage slot — override only if the caller already configured them. `get_detection_rules` returns `[]` whenever the current trigger is **not** `inference_set`.
 
 ### Rule system (low-level, all trigger kinds)
-`get_rule_system_info`, `get_record_config`, `set_record_config`, `get_schedule_rule`, `set_schedule_rule`, `get_record_trigger`, `set_record_trigger`, `activate_http_trigger`. Use these to combine detection with non-AI triggers (see below) or to tune the writer.
+`get_rule_system_info`, `get_record_config`, `set_record_config`, `get_schedule_rule`, `set_schedule_rule`, `get_record_trigger`, `set_record_trigger`, `activate_http_trigger`. Use these to combine detection with non-AI triggers (see below) or to tune the writer. Trigger kinds include `inference_set`, `timer`, `gpio`, `tty`, `http`, `always_on`, and `sed` (sound-event detection).
 
 ### Capture (independent of rule pipeline)
 | Command | Required | Optional |
@@ -135,7 +145,7 @@ All commands accept `device_name` (string) unless noted. `device_name` resolves 
 }
 ```
 
-- `label_filter` contains **label names as they appear in `get_detection_models_info`.labels** — never indexes. Leave empty to match any label.
+- `label_filter` contains **label names** as they appear in `get_detection_models_info`.labels (vision) or `get_active_acoustic_model`.labels (sound) — never indexes. Leave empty to match any label.
 - `region_filter` is a list of polygons of normalized `[x, y]` in `[0,1]`; omit or leave null for the full frame.
 - `confidence_range_filter` is `[min, max]` with both in `[0.0, 1.0]` and `min ≤ max`; defaults to `[0.25, 1.0]`. `debounce_times` defaults to `3` (consecutive matching frames).
 
@@ -150,8 +160,9 @@ All commands accept `device_name` (string) unless noted. `device_name` resolves 
 {"kind":"tty",  "name":"tty0", "command":"SHOOT"}
 {"kind":"http"}
 {"kind":"always_on"}
+{"kind":"sed", "model_id":"", "consecutive_window_ms":0, "confidence_range_filter":[0.5,1.0], "label_filter":["Cat"]}
 ```
-For `gpio` provide one of `name` or `num`; `state` ∈ {`DISABLED`,`FLOATING`,`PULL_UP`,`PULL_DOWN`}; `signal` ∈ {`HIGH`,`LOW`,`RISING`,`FALLING`}.
+For `gpio` provide one of `name` or `num`; `state` ∈ {`DISABLED`,`FLOATING`,`PULL_UP`,`PULL_DOWN`}; `signal` ∈ {`HIGH`,`LOW`,`RISING`,`FALLING`}. For `sed`, `model_id` is the acoustic `runtime_head_id`; leave it empty to accept the currently active model, and use labels from `get_active_acoustic_model`.
 
 ### Detection event
 ```json
@@ -163,9 +174,9 @@ For `gpio` provide one of `name` or `num`; `state` ∈ {`DISABLED`,`FLOATING`,`P
 
 1. Always supply a complete JSON object; never prompt interactively.
 2. Identify the target by `device_name` (preferred). `list_devices` is cheap — call it if unsure.
-3. Token format must match `sk_[A-Za-z0-9_\-]+`; validation is enforced by `add_device`.
-4. `label_filter` takes **label names** from `get_detection_models_info`. Do not translate names into numeric indexes — the MCP/SDK expects strings.
-5. For AI-only use, prefer `set_detection_rules` (it ensures writer + storage). For hybrid triggers (GPIO, timer, TTY, HTTP, always-on), use `set_record_trigger` directly — only one record trigger is active at a time.
+3. Token is a string without whitespace; it may be empty for local/trusted devices that do not require auth.
+4. `label_filter` takes **label names** from `get_detection_models_info` (vision) or `get_active_acoustic_model` (sound). Do not translate names into numeric indexes — the MCP/SDK expects strings.
+5. For AI-only use, prefer `set_detection_rules` (it ensures writer + storage). For hybrid triggers (GPIO, timer, TTY, HTTP, always-on, SED), use `set_record_trigger` directly — only one record trigger is active at a time.
 6. Poll `get_detection_events` with a checkpointed `start_unix_ms` (1–10 s cadence). Events accumulate on-device; `clear_detection_events` to reset.
 7. Prefer event metadata first; fetch imagery only when the user needs it. Images/≤5 MiB inline; videos/larger return a URL + `note`.
 8. When a storage slot is required (rules, timer, always-on), the facade's `ensure_storage=true` default will select the internal slot if none is enabled; for removable media the user must provision a slot beforehand.
@@ -174,7 +185,8 @@ For `gpio` provide one of `name` or `num`; `state` ∈ {`DISABLED`,`FLOATING`,`P
 
 ### 1 — Onboard a device
 1. (Optional) `detect_local_device` to confirm a local daemon.
-2. `add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxx"}'`.
+2. Remote device: `add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxx"}'`.
+   Local HTTPS device (self-signed cert): `add_device '{"name":"local","host":"127.0.0.1","token":"","protocol":"https","allow_unsecured":true}'`.
 3. `list_devices` to confirm.
 
 ### 2 — Person/object detection by name
@@ -216,6 +228,13 @@ Pair with `set_record_config '{"device_name":"cam1","rule_enabled":true,"writer_
 - Read: `get_gpio_value '{"device_name":"cam1","pin_id":2,"debounce_ms":50}'` → prints `0` or `1`.
 - Write: `set_gpio_value '{"device_name":"cam1","pin_id":1,"value":1}'` → prints `1`.
 
+### 8 — Sound-event detection trigger
+1. `get_active_acoustic_model '{"device_name":"cam1"}'` → inspect `labels` (e.g. `["Cat","_background_noise_"]`).
+2. Configure the rule pipeline for the desired writer format, e.g. `set_record_config '{"device_name":"cam1","rule_enabled":true,"writer_format":"MP4","writer_interval_ms":5000}'`.
+3. `set_record_trigger '{"device_name":"cam1","trigger":{"kind":"sed","model_id":"","consecutive_window_ms":0,"confidence_range_filter":[0.5,1.0],"label_filter":["Cat"]}}'`.
+4. Ensure a storage slot is selected (`get_storage_status` / `set_storage_slot`).
+5. Poll `get_detection_events` for clips triggered by the target sound class.
+
 ## CLI quickstart
 
 ```bash
@@ -224,10 +243,14 @@ alias rci='python3 -m recamera_intellisense'
 
 rci # list all commands
 rci add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxx"}'
+# Local HTTPS device with self-signed cert and no token
+rci add_device '{"name":"local","host":"127.0.0.1","token":"","protocol":"https","allow_unsecured":true}'
 rci list_devices
 rci get_detection_models_info '{"device_name":"cam1"}'
 rci set_detection_model '{"device_name":"cam1","model_name":"yolo11n"}'
 rci set_detection_rules '{"device_name":"cam1","rules":[{"name":"person","label_filter":["person"]}]}'
+rci get_active_acoustic_model '{"device_name":"cam1"}'
+rci set_record_trigger '{"device_name":"cam1","trigger":{"kind":"sed","model_id":"","consecutive_window_ms":0,"confidence_range_filter":[0.5,1.0],"label_filter":["Cat"]}}'
 rci get_detection_events '{"device_name":"cam1","start_unix_ms":1745150000000}'
 rci capture_image '{"device_name":"cam1"}'
 rci list_records '{"device_name":"cam1"}'
@@ -252,21 +275,25 @@ reCamera Task Progress
 
 | Symptom | Likely cause / fix |
 |---|---|
-| `HTTP 401/403` | Token missing/invalid — re-copy from Web Console; confirm `sk_` prefix. |
+| `HTTP 401/403` | Token missing/invalid — re-copy from Web Console |
 | `Connection refused` / `timed out` | Wrong `host`/`port`/`protocol`; verify LAN reachability and device power. |
-| HTTPS certificate error | Add `"allow_unsecured": true` for self-signed LAN certs (not for the public Internet). |
+| HTTPS certificate error | Add `"allow_unsecured": true` for self-signed LAN certs (not for the public Internet). Local HTTPS devices always use self-signed certs, so this is required. |
+| `add_device` rejects empty token | Empty tokens are only valid for local/trusted devices. For remote devices, copy the token from the Web Console. |
 | `get_detection_rules` returns `[]` | Current trigger is not `inference_set` — call `set_detection_rules` (or inspect `get_record_trigger`). |
 | Rules set but no events | No storage slot configured (`get_storage_status`); schedule window inactive; `region_filter`/`confidence_range_filter` too tight; `debounce_times` too high. |
 | `fetch_record` returns only `{url, note}` | File is a video or exceeds `max_inline_bytes` (default 5 MiB). Fetch the URL directly or raise the budget. |
 | `storage_task_submit` rejects `sync=true` | `FORMAT`/`FREE_UP` must run async — resubmit with `"sync": false` and poll `storage_task_status`. |
 | `Schedule rejected` | Use `Day HH:MM:SS` with three-letter day; `Day 24:00:00` valid. |
 | `set_detection_model` fails: "not installed" | Run `get_detection_models_info` and use one of the returned names/ids. |
+| `get_active_acoustic_model` returns null | No sound-event model is active. Open `/extension/acousticslab` on the device and activate a model. |
+| `set_record_trigger` (SED) fails | Ensure a model is active (`get_active_acoustic_model`); verify `label_filter` uses returned label names and `consecutive_window_ms` is within [0, 60000]. |
 | `detect_local_device` returns null | No `rcisd` daemon is listening on the Unix socket (default `/dev/shm/rcisd.sock`) within 3 s. Start the daemon or pass a different `socket_path`. |
 | `start_capture` rejects `output` with code 30022 | `output` must be an on-device directory under a mounted storage slot (check `get_storage_status.mount_path`). Local paths like `/tmp/...` are **not** valid — omit `output` to use the default slot, then `fetch_file` the result. |
 | `ImportError: recamera_intellisense` | Set `PYTHONPATH="{baseDir}/scripts"` or `cd {baseDir}/scripts` before `python3 -m recamera_intellisense`. |
+| `ImportError: attempted relative import with no known parent package` | You ran a source file other than `_cli.py` / `__main__.py` directly, or `PYTHONPATH` is wrong. Use `python3 -m recamera_intellisense <command>` or run `_cli.py` / `__main__.py` directly. |
 
 ## Reference pointers
 
 - **Command schemas at runtime**: `python3 -m recamera_intellisense` (prints every command with required/optional keys).
-- **Per-module sources**: `scripts/recamera_intellisense/{device,detection,model,rule,storage,records,capture,files,gpio,relay}.py` — short, stdlib-only, each file's `COMMAND_SCHEMAS` dict is authoritative.
+- **Per-module sources**: `scripts/recamera_intellisense/{device,detection,model,acoustic,rule,storage,records,capture,files,gpio,relay}.py` — short, stdlib-only, each file's `COMMAND_SCHEMAS` dict is authoritative.
 - **Credential store**: `~/.recamera/devices.json` (schema matches the Rust `DeviceEntry` in the MCP server; the two surfaces interoperate).

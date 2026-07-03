@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+if __name__ == "__main__" and __package__ is None:
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from recamera_intellisense._cli import main
+
+    raise SystemExit(main())
+
 from typing import Any, Dict, List, Optional
 
 from . import _config, _http
@@ -80,7 +89,7 @@ def _parse_avail_tty(v: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_record_config(device_name: str) -> Dict[str, Any]:
-    """Return ``{rule_enabled, writer: {format, interval_ms}}``."""
+    """Return `{rule_enabled, writer: {format, interval_ms}}`."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_CONFIG) or {}
     writer = d.get("dWriterConfig") or {}
@@ -100,7 +109,7 @@ def set_record_config(
     writer_format: str,
     writer_interval_ms: int = 0,
 ) -> None:
-    """Enable/disable the rule pipeline and set the writer format (``JPG``/``MP4``/``RAW``)."""
+    """Enable/disable the rule pipeline and set the writer format (`JPG`/`MP4`/`RAW`)."""
     dev = _config.resolve(device_name)
     payload = {
         "bRuleEnabled": bool(rule_enabled),
@@ -114,7 +123,7 @@ def set_record_config(
 
 
 def get_schedule_rule(device_name: str) -> Optional[List[Dict[str, str]]]:
-    """Active-weekdays list, or ``None`` when the schedule is disabled."""
+    """Active-weekdays list, or `None` when the schedule is disabled."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_SCHEDULE) or {}
     if not d.get("bEnabled"):
@@ -132,7 +141,7 @@ def set_schedule_rule(
     device_name: str,
     schedule: Optional[List[Dict[str, str]]] = None,
 ) -> None:
-    """Pass ``None`` or ``[]`` (or omit) to disable (rule active 24/7)."""
+    """Pass `None` or `[]` (or omit) to disable (rule active 24/7)."""
     dev = _config.resolve(device_name)
     ranges = schedule or []
     enabled = bool(ranges)
@@ -189,6 +198,17 @@ def parse_trigger(d: Dict[str, Any]) -> Dict[str, Any]:
         return {"kind": "http"}
     if kind == "ALWAYS_ON":
         return {"kind": "always_on"}
+    if kind == "SED":
+        s = d.get("dSED") or {}
+        confidence = s.get("lConfidenceFilter") or [0.0, 1.0]
+        labels = [x for x in (s.get("lClassFilter") or []) if isinstance(x, str)]
+        return {
+            "kind": "sed",
+            "model_id": s.get("sID", ""),
+            "consecutive_window_ms": int(s.get("iConsecutiveWindowMs", 0)),
+            "confidence_range_filter": [float(c) for c in confidence],
+            "label_filter": labels,
+        }
     raise ValueError(f"Unknown trigger kind {kind!r}")
 
 
@@ -231,7 +251,7 @@ def _detection_rule_to_json(rule: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _validate_confidence_range(rule_name: Any, confidence: List[Any]) -> None:
-    """Enforce ``confidence_range_filter = [min, max]`` with both ∈ [0, 1] and min ≤ max."""
+    """Enforce `confidence_range_filter = [min, max]` with both ∈ [0, 1] and min ≤ max."""
     label = f"rule {rule_name!r}" if rule_name else "rule"
     if not isinstance(confidence, list) or len(confidence) != 2:
         raise ValueError(
@@ -254,11 +274,11 @@ def _validate_confidence_range(rule_name: Any, confidence: List[Any]) -> None:
         )
 
 
-_TRIGGER_SIBLING_KEYS = ("lInferenceSet", "dTimer", "dGPIO", "dTTY")
+_TRIGGER_SIBLING_KEYS = ("lInferenceSet", "dTimer", "dGPIO", "dTTY", "dSED")
 
 
 def _trigger_patch(trigger: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
-    """Return ``(sCurrentSelected, {key: value, ...})`` for *trigger*.
+    """Return `(sCurrentSelected, {key: value, ...})` for *trigger*.
 
     The patch dict contains only the sub-object(s) owned by the selected
     kind. HTTP / ALWAYS_ON return an empty patch — they just flip the tag.
@@ -297,6 +317,22 @@ def _trigger_patch(trigger: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
         return "HTTP", {}
     if kind == "always_on":
         return "ALWAYS_ON", {}
+    if kind == "sed":
+        confidence = list(trigger.get("confidence_range_filter", [0.0, 1.0]))
+        _validate_confidence_range("sed", confidence)
+        consecutive_window_ms = int(trigger.get("consecutive_window_ms", 0))
+        if not (0 <= consecutive_window_ms <= 60000):
+            raise ValueError(
+                f"sed: consecutive_window_ms must be within [0, 60000]; got {consecutive_window_ms}"
+            )
+        return "SED", {
+            "dSED": {
+                "sID": str(trigger.get("model_id", "")),
+                "iConsecutiveWindowMs": consecutive_window_ms,
+                "lConfidenceFilter": confidence,
+                "lClassFilter": list(trigger.get("label_filter", [])),
+            }
+        }
     raise ValueError(f"Unknown trigger kind {kind!r}")
 
 
@@ -305,8 +341,8 @@ def _merge_trigger_payload(
 ) -> Dict[str, Any]:
     """Layer the *trigger* patch on top of *current* config sibling fields.
 
-    Other trigger kinds' remembered sub-objects (e.g. ``dGPIO`` when switching
-    to ``inference_set``) are copied forward so other clients — and later
+    Other trigger kinds' remembered sub-objects (e.g. `dGPIO` when switching
+    to `inference_set`) are copied forward so other clients — and later
     switches back — don't lose state. Only allowlisted keys are carried to
     avoid round-tripping server-only metadata.
     """
@@ -331,6 +367,7 @@ def trigger_to_json(trigger: Dict[str, Any]) -> Dict[str, Any]:
         {"kind": "inference_set", "rules": [...]}
         {"kind": "http"} | {"kind": "always_on"}
         {"kind": "tty", "name": "...", "command": "..."}
+        {"kind": "sed", "model_id": "", "consecutive_window_ms": 0, "confidence_range_filter": [0.5, 1.0], "label_filter": ["Cat"]}
 
     Prefer :func:`set_record_trigger`, which performs a read-modify-write so
     other trigger kinds' remembered settings survive a kind switch.
@@ -341,9 +378,9 @@ def trigger_to_json(trigger: Dict[str, Any]) -> Dict[str, Any]:
 def set_record_trigger(device_name: str, trigger: Dict[str, Any]) -> None:
     """Install *trigger* while preserving other kinds' remembered settings.
 
-    Fetches the current ``record-rule-config``, copies the sibling sub-objects
-    (``lInferenceSet``, ``dTimer``, ``dGPIO``, ``dTTY``) forward, overwrites
-    only ``sCurrentSelected`` and the sub-object for the selected kind, then
+    Fetches the current `record-rule-config`, copies the sibling sub-objects
+    (`lInferenceSet`, `dTimer`, `dGPIO`, `dTTY`) forward, overwrites
+    only `sCurrentSelected` and the sub-object for the selected kind, then
     POSTs. A GET failure degrades gracefully to a full-replace payload so
     this still works on a freshly provisioned device.
 

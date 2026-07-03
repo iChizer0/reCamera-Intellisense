@@ -1,8 +1,18 @@
-"""Stdlib-only Python SDK for reCamera; shares ``~/.recamera/devices.json`` with the MCP server."""
+"""Stdlib-only Python SDK for reCamera; shares `~/.recamera/devices.json` with the MCP server."""
 
 from __future__ import annotations
 
 from ._errors import RecameraError
+from .acoustic import get_active_acoustic_model
+from .capture import capture_image, get_capture_status, start_capture, stop_capture
+from .detection import (
+    clear_detection_events,
+    get_detection_events,
+    get_detection_rules,
+    get_detection_schedule,
+    set_detection_rules,
+    set_detection_schedule,
+)
 from .device import (
     add_device,
     detect_local_device,
@@ -11,6 +21,11 @@ from .device import (
     remove_device,
     update_device,
 )
+from .files import delete_file, fetch_file
+from .gpio import get_gpio_info, get_gpio_value, list_gpios, set_gpio_value
+from .model import get_detection_model, get_detection_models_info, set_detection_model
+from .records import fetch_record, list_records
+from .relay import close_relay, get_relay_status, open_relay  # noqa: F401
 from .rule import (
     activate_http_trigger,
     get_record_config,
@@ -29,20 +44,6 @@ from .storage import (
     storage_task_status,
     storage_task_submit,
 )
-from .relay import close_relay, get_relay_status, open_relay  # noqa: F401 (internal)
-from .records import fetch_record, list_records
-from .capture import capture_image, get_capture_status, start_capture, stop_capture
-from .gpio import get_gpio_info, get_gpio_value, list_gpios, set_gpio_value
-from .model import get_detection_model, get_detection_models_info, set_detection_model
-from .detection import (
-    clear_detection_events,
-    get_detection_events,
-    get_detection_rules,
-    get_detection_schedule,
-    set_detection_rules,
-    set_detection_schedule,
-)
-from .files import delete_file, fetch_file
 
 __version__ = "2.0.0"
 
@@ -84,6 +85,8 @@ __all__ = [
     "get_gpio_info",
     "set_gpio_value",
     "get_gpio_value",
+    # acoustic
+    "get_active_acoustic_model",
     # model / detection
     "get_detection_models_info",
     "get_detection_model",

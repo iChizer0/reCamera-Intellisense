@@ -8,8 +8,8 @@ use rmcp::{
 };
 
 use crate::api::{
-    capture as api_capture, daemon as api_daemon, gpio as api_gpio, rule as api_rule,
-    storage as api_storage,
+    acoustic as api_acoustic, capture as api_capture, daemon as api_daemon, gpio as api_gpio,
+    rule as api_rule, storage as api_storage,
 };
 use crate::api_client::ApiClient;
 use crate::detection;
@@ -31,6 +31,13 @@ macro_rules! try_tool {
 
 fn validate_not_empty(value: &str, field: &str) -> anyhow::Result<()> {
     anyhow::ensure!(!value.trim().is_empty(), "'{field}' must not be empty.");
+    Ok(())
+}
+
+fn validate_token(token: &str) -> anyhow::Result<()> {
+    if token.chars().any(|c| c.is_whitespace()) {
+        anyhow::bail!("Token must not contain whitespace; leave empty for local/trusted devices.");
+    }
     Ok(())
 }
 
@@ -165,7 +172,7 @@ impl ReCameraServer {
     ) -> Result<CallToolResult, ErrorData> {
         try_tool!(validate_not_empty(&params.name, "name"));
         try_tool!(validate_not_empty(&params.host, "host"));
-        try_tool!(validate_not_empty(&params.token, "token"));
+        try_tool!(validate_token(&params.token));
         let protocol = params.protocol.unwrap_or(Protocol::Http);
         // Secure-by-default: verify TLS certs unless the caller opts in.
         let allow_unsecured = params.allow_unsecured.unwrap_or(false);
@@ -213,6 +220,9 @@ impl ReCameraServer {
         Parameters(params): Parameters<UpdateDeviceParams>,
     ) -> Result<CallToolResult, ErrorData> {
         try_tool!(validate_not_empty(&params.device_name, "device_name"));
+        if let Some(token) = &params.token {
+            try_tool!(validate_token(token));
+        }
         let (host, token, protocol, allow_unsecured, port, must_reprobe) = {
             let store = self.store.read().await;
             let existing = match store.get_device(&params.device_name) {
@@ -380,6 +390,19 @@ impl ReCameraServer {
             .await
         );
         Ok(text_result("Detection model set successfully."))
+    }
+
+    #[tool(
+        description = "Get the currently active sound-event detection (acoustic) model. Returns null if no acoustic model is active.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn get_active_acoustic_model(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let model = try_tool!(api_acoustic::get_active_model(&self.client, &device).await);
+        Ok(try_tool!(json_result(&model)))
     }
 
     #[tool(
@@ -571,7 +594,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Get the current record trigger (tagged: inference_set | timer | gpio | tty | http | always_on).",
+        description = "Get the current record trigger (tagged: inference_set | timer | gpio | tty | http | always_on | sed).",
         annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_record_trigger(
@@ -584,7 +607,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the record trigger. Provide a tagged union with 'kind' = inference_set|timer|gpio|tty|http|always_on.",
+        description = "Set the record trigger. Provide a tagged union with 'kind' = inference_set|timer|gpio|tty|http|always_on|sed.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1089,8 +1112,8 @@ impl ServerHandler for ReCameraServer {
             ))
             .with_instructions(
                 "reCamera Intellisense MCP Server. Provides tools to manage reCamera devices, \
-                 configure AI detection + record triggers, query events, capture images/video, \
-                 browse recorded clips (fetch_record), and control GPIO.\n\n\
+                 configure AI detection + sound-event detection + record triggers, query events, \
+                 capture images/video, browse recorded clips (fetch_record), and control GPIO.\n\n\
                  Recommended workflow:\n\
                  1) Register a device with `add_device` (or confirm one exists via `list_devices`).\n\
                  2) Verify readiness with `get_storage_status` before writing; run `set_storage_slot` / \
@@ -1098,7 +1121,7 @@ impl ServerHandler for ReCameraServer {
                  3) Choose an AI model with `set_detection_model`, set a window with `set_detection_schedule`, \
                  and install rules via `set_detection_rules` (automatically picks INFERENCE_SET).\n\
                  4) Or configure a non-AI record trigger via `set_record_trigger` (`timer`, `gpio`, `tty`, \
-                 `http`, `always_on`).\n\
+                 `http`, `always_on`, `sed`). For `sed`, first call `get_active_acoustic_model` to get labels.\n\
                  5) Poll `get_detection_events` for recent matches and `fetch_file` / `fetch_record` to \
                  retrieve snapshots.\n\n\
                  For HTTPS devices, keep `allow_unsecured=false` on the trusted network and only opt in to \

@@ -1,6 +1,15 @@
-"""Daemon file API + intellisense events (``/api/v1/file``, ``/api/v1/intellisense/events``)."""
+"""Daemon file API + intellisense events (`/api/v1/file`, `/api/v1/intellisense/events`)."""
 
 from __future__ import annotations
+
+if __name__ == "__main__" and __package__ is None:
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from recamera_intellisense._cli import main
+
+    raise SystemExit(main())
 
 import base64
 from typing import Any, Dict, List, Optional, Union
@@ -26,7 +35,7 @@ def _validate_absolute_path(path: Any) -> str:
     """Reject obviously unsafe inputs before sending them to the daemon.
 
     The daemon enforces its own allowlist, but validating here catches
-    typos, accidental path traversal (``..``), NUL-byte injection into the
+    typos, accidental path traversal (`..`), NUL-byte injection into the
     query string, and non-absolute paths with a clearer error.
     """
     if not isinstance(path, str) or not path:
@@ -51,8 +60,8 @@ def fetch_file(
 ) -> Union[bytes, Dict[str, Any]]:
     """Fetch an on-device file.
 
-    Returns inline base64 for images / payloads ≤ ``max_inline_bytes``.
-    When ``raw=True``, returns the raw ``bytes`` (useful for pipelines).
+    Returns inline base64 for images / payloads ≤ `max_inline_bytes`.
+    When `raw=True`, returns the raw `bytes` (useful for pipelines).
     """
     path = _validate_absolute_path(path)
     dev = _config.resolve(device_name)
@@ -91,7 +100,7 @@ def get_intellisense_events(
 ) -> List[Dict[str, Any]]:
     """Fetch raw intellisense events from the daemon event store.
 
-    The daemon accepts ``?start=<ms>&end=<ms>`` (inclusive Unix milliseconds).
+    The daemon accepts `?start=<ms>&end=<ms>` (inclusive Unix milliseconds).
     Callers who want the normalized detection-event shape should use
     :func:`detection.get_detection_events` instead.
     """
@@ -112,8 +121,8 @@ def get_intellisense_events(
 def clear_intellisense_events(device_name: str) -> None:
     """Clear all buffered intellisense events on the daemon.
 
-    Calls ``POST /api/v1/intellisense/events/clear`` (the daemon does not
-    support ``DELETE`` on the events collection).
+    Calls `POST /api/v1/intellisense/events/clear` (the daemon does not
+    support `DELETE` on the events collection).
     """
     dev = _config.resolve(device_name)
     resp = _http.post_json(dev, PATH_EVENTS_CLEAR)

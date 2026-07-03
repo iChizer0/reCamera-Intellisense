@@ -1,6 +1,15 @@
-"""Detection model management (``/model/{list,inference}``)."""
+"""Detection model management (`/model/{list,inference}`)."""
 
 from __future__ import annotations
+
+if __name__ == "__main__" and __package__ is None:
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from recamera_intellisense._cli import main
+
+    raise SystemExit(main())
 
 from typing import Any, Dict, List, Optional
 
@@ -45,7 +54,7 @@ def get_detection_models_info(device_name: str) -> List[Dict[str, Any]]:
 
 
 def get_detection_model(device_name: str) -> Optional[Dict[str, Any]]:
-    """Currently-active detection model, or ``None``."""
+    """Currently-active detection model, or `None`."""
     dev = _config.resolve(device_name)
     data = _http.get_json(dev, PATH_INFERENCE) or {}
     if not data.get("iEnable"):

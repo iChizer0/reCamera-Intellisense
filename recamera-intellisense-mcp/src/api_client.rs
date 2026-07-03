@@ -30,6 +30,14 @@ impl ApiClient {
         }
     }
 
+    fn with_auth(req: reqwest::RequestBuilder, token: &str) -> reqwest::RequestBuilder {
+        if token.is_empty() {
+            req
+        } else {
+            req.header("Authorization", token)
+        }
+    }
+
     fn client_for(&self, device: &DeviceRecord) -> &Client {
         if device.protocol == "https" && device.allow_unsecured {
             &self.insecure_client
@@ -53,7 +61,7 @@ impl ApiClient {
     ) -> Result<Value> {
         let url = Self::api_url(device, endpoint);
         let client = self.client_for(device);
-        let mut req = client.get(&url).header("Authorization", &device.token);
+        let mut req = Self::with_auth(client.get(&url), &device.token);
         if let Some(params) = params {
             req = req.query(params);
         }
@@ -75,7 +83,7 @@ impl ApiClient {
     ) -> Result<Value> {
         let url = Self::api_url(device, endpoint);
         let client = self.client_for(device);
-        let mut req = client.post(&url).header("Authorization", &device.token);
+        let mut req = Self::with_auth(client.post(&url), &device.token);
         if let Some(params) = params {
             req = req.query(params);
         }
@@ -94,9 +102,7 @@ impl ApiClient {
     pub async fn post_text(&self, device: &DeviceRecord, endpoint: &str, body: &str) -> Result<()> {
         let url = Self::api_url(device, endpoint);
         let client = self.client_for(device);
-        let resp = client
-            .post(&url)
-            .header("Authorization", &device.token)
+        let resp = Self::with_auth(client.post(&url), &device.token)
             .header("Content-Type", "text/plain")
             .body(body.to_string())
             .send()
@@ -117,7 +123,7 @@ impl ApiClient {
     ) -> Result<Vec<u8>> {
         let url = Self::api_url(device, endpoint);
         let client = self.client_for(device);
-        let mut req = client.get(&url).header("Authorization", &device.token);
+        let mut req = Self::with_auth(client.get(&url), &device.token);
         if let Some(params) = params {
             req = req.query(params);
         }
@@ -144,7 +150,7 @@ impl ApiClient {
     ) -> Result<()> {
         let url = Self::api_url(device, endpoint);
         let client = self.client_for(device);
-        let mut req = client.delete(&url).header("Authorization", &device.token);
+        let mut req = Self::with_auth(client.delete(&url), &device.token);
         if let Some(params) = params {
             req = req.query(params);
         }
@@ -180,11 +186,7 @@ impl ApiClient {
         } else {
             &self.secure_client
         };
-        let resp = client
-            .get(&url)
-            .header("Authorization", token)
-            .send()
-            .await?;
+        let resp = Self::with_auth(client.get(&url), token).send().await?;
         let status = resp.status().as_u16();
         if status == 401 || status == 403 {
             bail!("Authentication failed (HTTP {status}). Verify the token.");

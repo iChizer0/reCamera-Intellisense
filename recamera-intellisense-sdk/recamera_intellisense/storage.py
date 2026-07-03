@@ -1,6 +1,15 @@
-"""Storage slots, quota, and async tasks (``/record/storage/{status,config,control}``)."""
+"""Storage slots, quota, and async tasks (`/record/storage/{status,config,control}`)."""
 
 from __future__ import annotations
+
+if __name__ == "__main__" and __package__ is None:
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from recamera_intellisense._cli import main
+
+    raise SystemExit(main())
 
 from typing import Any, Dict, List, Optional
 
@@ -116,7 +125,7 @@ def configure_storage_quota(
     quota_limit_bytes: int,
     quota_rotate: bool = True,
 ) -> None:
-    """Set per-slot quota. ``quota_limit_bytes = -1`` means no limit."""
+    """Set per-slot quota. `quota_limit_bytes = -1` means no limit."""
     dev = _config.resolve(device_name)
     payload = {
         "sTask": "SYNC",
@@ -161,10 +170,10 @@ def storage_task_submit(
     sync: bool = False,
     files: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Submit a storage action. ``sync=True`` blocks until completion.
+    """Submit a storage action. `sync=True` blocks until completion.
 
-    ``FORMAT`` and ``FREE_UP`` can take a long time and are rejected with
-    ``sync=True`` (submit async and poll :func:`storage_task_status` instead).
+    `FORMAT` and `FREE_UP` can take a long time and are rejected with
+    `sync=True` (submit async and poll :func:`storage_task_status` instead).
     """
     action_canonical = normalize_action(action)
     if sync and action_canonical in ("FORMAT", "FREE_UP"):
@@ -211,7 +220,7 @@ def storage_task_cancel(
 
 
 def ensure_storage(device_name: str, *, timeout_s: float = 3.0) -> None:
-    """Ensure one slot is enabled with rotate-quota on (mirrors Rust ``storage::ensure_storage``)."""
+    """Ensure one slot is enabled with rotate-quota on (mirrors Rust `storage::ensure_storage`)."""
     import time
 
     slots = get_storage_status(device_name)

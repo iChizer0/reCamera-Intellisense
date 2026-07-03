@@ -1,7 +1,7 @@
 """Setuptools shim.
 
-Metadata lives in ``pyproject.toml``; this file only wires a build-time hook
-that keeps ``skills/recamera-intellisense/scripts/recamera_intellisense`` pointing
+Metadata lives in `pyproject.toml`; this file only wires a build-time hook
+that keeps `skills/recamera-intellisense/scripts/recamera_intellisense` pointing
 at the SDK package, so the skill works without installing the SDK.
 """
 
@@ -70,12 +70,12 @@ class _Develop(develop):
 
 
 if __name__ == "__main__":
-    # Fire the hook on bare ``python setup.py`` invocations too.
+    # Fire the hook on bare `python setup.py` invocations too.
     _link_skill_package()
 
 # Ensure setuptools reads this package's pyproject.toml / finds the right
 # source tree even when invoked from a different working directory (e.g.
-# ``python recamera-intellisense-sdk/setup.py build_py`` from the repo root).
+# `python recamera-intellisense-sdk/setup.py build_py` from the repo root).
 # Without this, setuptools falls back to flat-layout auto-discovery in the
 # caller's CWD and fails with "Multiple top-level packages discovered".
 os.chdir(str(pathlib.Path(__file__).resolve().parent))

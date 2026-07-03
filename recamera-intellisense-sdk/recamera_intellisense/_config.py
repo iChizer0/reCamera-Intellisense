@@ -1,4 +1,4 @@
-"""Device profile store at ``~/.recamera/devices.json`` (schema matches the Rust ``DeviceEntry``)."""
+"""Device profile store at `~/.recamera/devices.json` (schema matches the Rust `DeviceEntry`)."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ class DeviceRecord(TypedDict, total=False):
     port: Optional[int]
 
 
-_TOKEN_RE = re.compile(r"^sk_[A-Za-z0-9_\-]+$")
 _HOSTNAME_RE = re.compile(
     r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$"
 )
@@ -45,8 +44,12 @@ def is_valid_host(host: str) -> bool:
 
 
 def validate_token(token: str) -> None:
-    if not isinstance(token, str) or not _TOKEN_RE.match(token.strip()):
-        raise ValueError(f"Invalid token format: expected 'sk_<chars>', got {token!r}.")
+    """Accept empty strings for local devices; reject whitespace."""
+    if not isinstance(token, str) or (token and any(c.isspace() for c in token)):
+        raise ValueError(
+            f"Invalid token: expected a string without whitespace "
+            f"(empty for local devices, non-empty for remote devices), got {token!r}."
+        )
 
 
 def validate_name(name: str) -> None:
@@ -77,6 +80,8 @@ def _normalize_entry(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     token = raw.get("token")
     if not isinstance(host, str) or not isinstance(token, str):
         return None
+    host = host.strip()
+    token = token.strip()
     protocol = raw.get("protocol", "http")
     if protocol not in ("http", "https"):
         protocol = "http"
@@ -89,7 +94,7 @@ def _normalize_entry(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         except (TypeError, ValueError):
             port = None
     entry: Dict[str, Any] = {
-        "host": host.strip(),
+        "host": host,
         "token": token,
         "protocol": protocol,
         "allow_unsecured": allow_unsecured,
@@ -100,7 +105,7 @@ def _normalize_entry(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def load_all() -> Dict[str, Dict[str, Any]]:
-    """Load all device entries; returns ``{}`` when no file exists."""
+    """Load all device entries; returns `{}` when no file exists."""
     _ensure_dir()
     if not DEVICE_PROFILES_PATH.exists():
         return {}

@@ -6,7 +6,7 @@ use crate::api_client::ApiClient;
 use crate::types::{
     AvailableGpio, AvailableTty, DetectionRule, DeviceRecord, GpioTrigger, GpioTriggerSignal,
     GpioTriggerState, RecordTrigger, RuleConfig, RuleEvent, RuleEventOwner, RuleInfo,
-    ScheduleRange, TtyTrigger, WriterConfig,
+    ScheduleRange, SedTrigger, TtyTrigger, WriterConfig,
 };
 
 // MARK: Paths
@@ -317,6 +317,36 @@ pub fn parse_trigger(data: &Value) -> Result<RecordTrigger> {
         }
         "HTTP" => RecordTrigger::Http,
         "ALWAYS_ON" => RecordTrigger::AlwaysOn,
+        "SED" => {
+            let d = data.get("dSED").context("missing dSED")?;
+            let confidence: Vec<f64> = d
+                .get("lConfidenceFilter")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
+                .unwrap_or_else(|| vec![0.0, 1.0]);
+            let labels: Vec<String> = d
+                .get("lClassFilter")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            RecordTrigger::Sed(SedTrigger {
+                model_id: d
+                    .get("sID")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                consecutive_window_ms: d
+                    .get("iConsecutiveWindowMs")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                confidence_range_filter: confidence,
+                label_filter: labels,
+            })
+        }
         other => bail!("unknown trigger kind '{other}'"),
     })
 }
@@ -324,7 +354,24 @@ pub fn parse_trigger(data: &Value) -> Result<RecordTrigger> {
 /// Keys on `/record-rule-config` that are owned by **one specific** trigger
 /// kind. When switching kinds, we copy forward every such key that the device
 /// already has so other clients' remembered settings survive.
-const TRIGGER_SIBLING_KEYS: &[&str] = &["lInferenceSet", "dTimer", "dGPIO", "dTTY"];
+const TRIGGER_SIBLING_KEYS: &[&str] = &["lInferenceSet", "dTimer", "dGPIO", "dTTY", "dSED"];
+
+fn validate_sed_trigger(s: &SedTrigger) -> Result<()> {
+    if s.confidence_range_filter.len() != 2 {
+        bail!("SED trigger confidence_range_filter must be exactly [min, max]");
+    }
+    let c = &s.confidence_range_filter;
+    if !(0.0..=1.0).contains(&c[0]) || !(0.0..=1.0).contains(&c[1]) {
+        bail!("SED trigger confidence_range_filter values must be within [0.0, 1.0]");
+    }
+    if c[0] > c[1] {
+        bail!("SED trigger confidence_range_filter min must be <= max");
+    }
+    if s.consecutive_window_ms > 60000 {
+        bail!("SED trigger consecutive_window_ms must be within [0, 60000]");
+    }
+    Ok(())
+}
 
 /// Return the `(sCurrentSelected, [(key, value), ...])` patch that fully
 /// describes a trigger. Patch entries overwrite any pre-existing value for
@@ -369,6 +416,21 @@ fn trigger_patch(trigger: &RecordTrigger) -> Result<(&'static str, Vec<(&'static
         }
         RecordTrigger::Http => ("HTTP", vec![]),
         RecordTrigger::AlwaysOn => ("ALWAYS_ON", vec![]),
+        RecordTrigger::Sed(s) => {
+            validate_sed_trigger(s)?;
+            (
+                "SED",
+                vec![(
+                    "dSED",
+                    json!({
+                        "sID": s.model_id,
+                        "iConsecutiveWindowMs": s.consecutive_window_ms,
+                        "lConfidenceFilter": s.confidence_range_filter,
+                        "lClassFilter": s.label_filter,
+                    }),
+                )],
+            )
+        }
     })
 }
 
@@ -553,6 +615,74 @@ mod tests {
     }
 
     #[test]
+    fn trigger_roundtrip_sed() {
+        let t = RecordTrigger::Sed(SedTrigger {
+            model_id: "".into(),
+            consecutive_window_ms: 100,
+            confidence_range_filter: vec![0.5, 1.0],
+            label_filter: vec!["Cat".into()],
+        });
+        let j = trigger_to_json(&t).unwrap();
+        assert_eq!(j["sCurrentSelected"], "SED");
+        assert_eq!(j["dSED"]["iConsecutiveWindowMs"], 100);
+        let back = parse_trigger(&j).unwrap();
+        match back {
+            RecordTrigger::Sed(s) => {
+                assert_eq!(s.consecutive_window_ms, 100);
+                assert_eq!(s.label_filter, vec!["Cat"]);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn sed_trigger_deserializes_from_json_rpc_payload() {
+        let json = r#"{"kind":"sed","model_id":"","consecutive_window_ms":0,"confidence_range_filter":[0.4,1.0],"label_filter":["Cat"]}"#;
+        let t: RecordTrigger = serde_json::from_str(json).unwrap();
+        match t {
+            RecordTrigger::Sed(s) => {
+                assert_eq!(s.consecutive_window_ms, 0);
+                assert_eq!(s.confidence_range_filter, vec![0.4, 1.0]);
+                assert_eq!(s.label_filter, vec!["Cat"]);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn sed_trigger_rejects_out_of_range_confidence() {
+        let t = RecordTrigger::Sed(SedTrigger {
+            model_id: "".into(),
+            consecutive_window_ms: 0,
+            confidence_range_filter: vec![0.5, 1.5],
+            label_filter: vec!["Cat".into()],
+        });
+        assert!(trigger_to_json(&t).is_err());
+    }
+
+    #[test]
+    fn sed_trigger_rejects_inverted_confidence() {
+        let t = RecordTrigger::Sed(SedTrigger {
+            model_id: "".into(),
+            consecutive_window_ms: 0,
+            confidence_range_filter: vec![0.8, 0.2],
+            label_filter: vec!["Cat".into()],
+        });
+        assert!(trigger_to_json(&t).is_err());
+    }
+
+    #[test]
+    fn sed_trigger_rejects_window_too_large() {
+        let t = RecordTrigger::Sed(SedTrigger {
+            model_id: "".into(),
+            consecutive_window_ms: 60001,
+            confidence_range_filter: vec![0.5, 1.0],
+            label_filter: vec!["Cat".into()],
+        });
+        assert!(trigger_to_json(&t).is_err());
+    }
+
+    #[test]
     fn gpio_trigger_requires_name_or_num() {
         let t = RecordTrigger::Gpio(GpioTrigger {
             name: None,
@@ -587,7 +717,7 @@ mod tests {
     }
 
     /// Simulates a device config that already remembers every trigger kind;
-    /// switching to TIMER must preserve `dGPIO`, `dTTY`, and `lInferenceSet`.
+    /// switching to TIMER must preserve `dGPIO`, `dTTY`, `lInferenceSet`, and `dSED`.
     fn rich_current() -> Value {
         json!({
             "sCurrentSelected": "GPIO",
@@ -606,6 +736,12 @@ mod tests {
                 "iDebounceDurationMs": 50
             },
             "dTTY": { "sName": "tty0", "sCommand": "SHOOT" },
+            "dSED": {
+                "sID": "",
+                "iConsecutiveWindowMs": 100,
+                "lConfidenceFilter": [0.5, 1.0],
+                "lClassFilter": ["Cat"]
+            },
             "bSomeServerOnlyField": true
         })
     }
@@ -628,6 +764,7 @@ mod tests {
         assert_eq!(payload["dGPIO"]["sState"], "PULL_UP");
         assert_eq!(payload["dTTY"]["sCommand"], "SHOOT");
         assert_eq!(payload["lInferenceSet"][0]["sID"], "legacy-rule");
+        assert_eq!(payload["dSED"]["lClassFilter"][0], "Cat");
         // Server-only metadata is NOT round-tripped.
         assert!(payload.get("bSomeServerOnlyField").is_none());
     }
