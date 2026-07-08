@@ -16,16 +16,6 @@ For detailed API signatures and CLI schemas, see [API Reference](skills/recamera
 
 **Note: requires reCamera Pro hardware with an experimental firmware, stay tuned for the public release!**
 
-### Option A — ClawHub
-
-If you use the [ClawHub](https://clawhub.ai) agent framework, install the skill directly:
-
-```bash
-npx clawhub@latest install recamera-intellisense
-```
-
-### Option B — Python setup script
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-skill.py | python3
 ```
