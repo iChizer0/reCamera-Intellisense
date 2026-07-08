@@ -15,7 +15,7 @@ user-invocable: true
 
 # reCamera Intellisense
 
-Drive one or more [reCamera Pro (Pending Release)](https://wiki.seeedstudio.com/recamera/) devices: device registration, AI detection configuration, sound-event detection, rule-based recording, event polling, on-demand capture, storage/records management, and GPIO control. The skill bundles a Python SDK (`scripts/recamera_intellisense/`) that is the **single source of truth** for every command's parameters; the same package backs the MCP server, so CLI and MCP schemas are identical.
+Drive one or more [reCamera Pro](https://wiki.seeedstudio.com/recamera_pro_getting_started/) devices: device registration, AI detection configuration, sound-event detection, rule-based recording, event polling, on-demand capture, storage/records management, and GPIO control. The skill bundles a Python SDK (`scripts/recamera_intellisense/`) that is the **single source of truth** for every command's parameters; the same package backs the MCP server, so CLI and MCP schemas are identical.
 
 ## Requirements
 
