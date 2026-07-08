@@ -468,8 +468,20 @@ pub struct PinDescriptor {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DetectLocalDeviceParams {
-    /// Unix socket path to probe (default: /dev/shm/rcisd.sock).
-    pub socket_path: Option<String>,
+    /// Host to probe (IP address or hostname).
+    pub host: String,
+    /// Optional port; defaults to 443 for HTTPS or 80 for HTTP.
+    pub port: Option<u16>,
+    /// Optional auth token (empty for devices that do not require auth).
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DetectedDevice {
+    pub host: String,
+    pub port: u16,
+    pub protocol: String,
+    pub allow_unsecured: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -480,8 +492,7 @@ pub struct AddDeviceParams {
     pub host: String,
     /// Auth token. Leave empty for local/trusted devices that do not require
     /// authentication (e.g. a local `rcisd` daemon). For remote devices, use the
-    /// token shown in the Web Console (older firmware uses `sk_...`, newer
-    /// firmware may issue arbitrary non-whitespace tokens).
+    /// token shown in the Web Console.
     pub token: String,
     /// Transport protocol (default: http).
     pub protocol: Option<Protocol>,

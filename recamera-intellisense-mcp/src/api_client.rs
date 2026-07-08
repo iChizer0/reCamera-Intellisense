@@ -1,12 +1,14 @@
+use std::net::Ipv6Addr;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
 use reqwest::Client;
 use serde_json::Value;
 
-use crate::types::DeviceRecord;
+use crate::types::{DetectedDevice, DeviceRecord};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
+const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub struct ApiClient {
     secure_client: Client,
@@ -46,10 +48,19 @@ impl ApiClient {
         }
     }
 
+    fn format_host(host: &str) -> String {
+        if host.parse::<Ipv6Addr>().is_ok() {
+            format!("[{host}]")
+        } else {
+            host.to_string()
+        }
+    }
+
     pub fn api_url(device: &DeviceRecord, endpoint: &str) -> String {
+        let host = Self::format_host(&device.host);
         match device.port {
-            Some(port) => format!("{}://{}:{}{}", device.protocol, device.host, port, endpoint),
-            None => format!("{}://{}{}", device.protocol, device.host, endpoint),
+            Some(port) => format!("{}://{}:{}{}", device.protocol, host, port, endpoint),
+            None => format!("{}://{}{}", device.protocol, host, endpoint),
         }
     }
 
@@ -169,26 +180,32 @@ impl ApiClient {
         Ok(())
     }
 
-    pub async fn test_connection(
+    #[allow(clippy::too_many_arguments)]
+    async fn probe_generate_204(
         &self,
         host: &str,
-        token: &str,
+        port: u16,
         protocol: &str,
         allow_unsecured: bool,
-        port: Option<u16>,
+        token: &str,
+        auth_error_is_reachable: bool,
+        timeout: Duration,
     ) -> Result<()> {
-        let url = match port {
-            Some(p) => format!("{protocol}://{host}:{p}/api/v1/recamera-generate-204"),
-            None => format!("{protocol}://{host}/api/v1/recamera-generate-204"),
-        };
+        let host = Self::format_host(host);
+        let url = format!("{protocol}://{host}:{port}/api/v1/recamera-generate-204");
         let client = if protocol == "https" && allow_unsecured {
             &self.insecure_client
         } else {
             &self.secure_client
         };
-        let resp = Self::with_auth(client.get(&url), token).send().await?;
+        let resp = Self::with_auth(client.get(&url).timeout(timeout), token)
+            .send()
+            .await?;
         let status = resp.status().as_u16();
         if status == 401 || status == 403 {
+            if auth_error_is_reachable {
+                return Ok(());
+            }
             bail!("Authentication failed (HTTP {status}). Verify the token.");
         }
         if !resp.status().is_success() {
@@ -197,13 +214,61 @@ impl ApiClient {
         Ok(())
     }
 
-    #[cfg(unix)]
-    pub async fn detect_local(socket_path: &str) -> bool {
-        tokio::net::UnixStream::connect(socket_path).await.is_ok()
+    pub async fn test_connection(
+        &self,
+        host: &str,
+        token: &str,
+        protocol: &str,
+        allow_unsecured: bool,
+        port: Option<u16>,
+    ) -> Result<()> {
+        let port = port.unwrap_or_else(|| if protocol == "https" { 443 } else { 80 });
+        self.probe_generate_204(
+            host,
+            port,
+            protocol,
+            allow_unsecured,
+            token,
+            false,
+            CONNECTION_TIMEOUT,
+        )
+        .await?;
+        Ok(())
     }
 
-    #[cfg(not(unix))]
-    pub async fn detect_local(_socket_path: &str) -> bool {
-        false
+    pub async fn detect_device(
+        &self,
+        host: &str,
+        port: Option<u16>,
+        token: &str,
+    ) -> Result<Option<DetectedDevice>> {
+        let probes = [
+            ("https", port.unwrap_or(443), false),
+            ("https", port.unwrap_or(443), true),
+            ("http", port.unwrap_or(80), false),
+        ];
+        for (protocol, probe_port, allow_unsecured) in probes {
+            if (self
+                .probe_generate_204(
+                    host,
+                    probe_port,
+                    protocol,
+                    allow_unsecured,
+                    token,
+                    true,
+                    PROBE_TIMEOUT,
+                )
+                .await)
+                .is_ok()
+            {
+                return Ok(Some(DetectedDevice {
+                    host: host.to_string(),
+                    port: probe_port,
+                    protocol: protocol.to_string(),
+                    allow_unsecured,
+                }));
+            }
+        }
+        Ok(None)
     }
 }

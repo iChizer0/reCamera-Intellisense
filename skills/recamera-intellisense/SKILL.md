@@ -20,8 +20,8 @@ Drive one or more [reCamera Pro (Pending Release)](https://wiki.seeedstudio.com/
 ## Requirements
 
 - `python3` ≥ 3.9 (stdlib only — no `pip install` needed)
-- Reachable reCamera HTTP/HTTPS API (default TCP `80`/`443`) **or** a local `rcisd` daemon serving HTTP over the Unix socket `/dev/shm/rcisd.sock`
-- Per-device auth token (Web Console → Device Info → Connection Settings → HTTP/HTTPS). **Local devices** (e.g. a local `rcisd` daemon) may not require a token — pass an empty string.
+- Reachable reCamera HTTP/HTTPS API (default TCP `80`/`443`)
+- Per-device auth token (Web Console → Device Info → Connection Settings → HTTP/HTTPS). **Local devices** may not require a token — pass an empty string. Tokens are arbitrary non-whitespace strings.
 - Credential store at `~/.recamera/devices.json` (auto-created, chmod `600`). Shared with the MCP server if installed.
 
 ## Security
@@ -42,8 +42,8 @@ The bundled SDK runs without installation. From `{baseDir}` (the skill root):
 # One-shot (recommended)
 PYTHONPATH="{baseDir}/scripts" python3 -m recamera_intellisense <command> '<json>'
 
-# One-shot without -m (also works)
-PYTHONPATH="{baseDir}/scripts" python3 {baseDir}/scripts/recamera_intellisense/_cli.py <command> '<json>'
+# Direct module execution also works
+PYTHONPATH="{baseDir}/scripts" python3 {baseDir}/scripts/recamera_intellisense/device.py <command> '<json>'
 
 # Convenience alias for a session
 export PYTHONPATH="{baseDir}/scripts"
@@ -76,7 +76,7 @@ All commands accept `device_name` (string) unless noted. `device_name` resolves 
 ### Device registry
 | Command | Required | Optional |
 |---|---|---|
-| `detect_local_device` | — | `socket_path` (default `/dev/shm/rcisd.sock`) |
+| `detect_local_device` | `host` | `port`, `token` (empty for devices that do not require auth), `timeout` |
 | `add_device` | `name`, `host`, `token` (empty for local devices) | `protocol` (`http`/`https`), `allow_unsecured`, `port` |
 | `update_device` | `device_name` | any of `host`, `token` (empty for local devices), `protocol`, `allow_unsecured`, `port` |
 | `remove_device` / `get_device` | `device_name` | — |
@@ -184,9 +184,9 @@ For `gpio` provide one of `name` or `num`; `state` ∈ {`DISABLED`,`FLOATING`,`P
 ## Workflows
 
 ### 1 — Onboard a device
-1. (Optional) `detect_local_device` to confirm a local daemon.
-2. Remote device: `add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxx"}'`.
-   Local HTTPS device (self-signed cert): `add_device '{"name":"local","host":"127.0.0.1","token":"","protocol":"https","allow_unsecured":true}'`.
+1. (Optional) `detect_local_device '{"host":"192.168.1.100"}'` → returns `{detected, host, port, protocol, allow_unsecured}`.
+2. `add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxx","protocol":"https","allow_unsecured":true}'` (copy `protocol`/`allow_unsecured` from the detection result).
+   Local HTTP device: `add_device '{"name":"local","host":"127.0.0.1","token":""}'`.
 3. `list_devices` to confirm.
 
 ### 2 — Person/object detection by name
@@ -287,10 +287,10 @@ reCamera Task Progress
 | `set_detection_model` fails: "not installed" | Run `get_detection_models_info` and use one of the returned names/ids. |
 | `get_active_acoustic_model` returns null | No sound-event model is active. Open `/extension/acousticslab` on the device and activate a model. |
 | `set_record_trigger` (SED) fails | Ensure a model is active (`get_active_acoustic_model`); verify `label_filter` uses returned label names and `consecutive_window_ms` is within [0, 60000]. |
-| `detect_local_device` returns null | No `rcisd` daemon is listening on the Unix socket (default `/dev/shm/rcisd.sock`) within 3 s. Start the daemon or pass a different `socket_path`. |
+| `detect_local_device` returns `{"detected":false}` | No reCamera API found on the tried ports. Verify the device is powered on, on the same network, and that its HTTP/HTTPS API is enabled. Pass `port` if the device uses a non-standard port. |
 | `start_capture` rejects `output` with code 30022 | `output` must be an on-device directory under a mounted storage slot (check `get_storage_status.mount_path`). Local paths like `/tmp/...` are **not** valid — omit `output` to use the default slot, then `fetch_file` the result. |
 | `ImportError: recamera_intellisense` | Set `PYTHONPATH="{baseDir}/scripts"` or `cd {baseDir}/scripts` before `python3 -m recamera_intellisense`. |
-| `ImportError: attempted relative import with no known parent package` | You ran a source file other than `_cli.py` / `__main__.py` directly, or `PYTHONPATH` is wrong. Use `python3 -m recamera_intellisense <command>` or run `_cli.py` / `__main__.py` directly. |
+| `ImportError: attempted relative import with no known parent package` | `PYTHONPATH` is wrong or you ran the file from outside the package. Set `PYTHONPATH="{baseDir}/scripts"` and use `python3 -m recamera_intellisense <command>`, or run any module directly with `PYTHONPATH` set. |
 
 ## Reference pointers
 

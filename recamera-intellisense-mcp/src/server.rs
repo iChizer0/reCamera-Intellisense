@@ -128,29 +128,33 @@ impl ReCameraServer {
     // MARK: Device management
 
     #[tool(
-        description = "Detect a reCamera Intellisense daemon running locally by checking its Unix socket. Returns a structured result: {detected: bool, socket_path: string, hint?: string}. When detected=false, 'hint' explains how to launch the daemon.",
+        description = "Detect a reCamera device by probing its IP/host for HTTP/HTTPS API. Returns a structured result: {detected: bool, host: string, port: number, protocol: string, allow_unsecured: bool, hint?: string}. Tries HTTPS (validated), HTTPS (self-signed), then HTTP.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn detect_local_device(
         &self,
         Parameters(params): Parameters<DetectLocalDeviceParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let socket_path = params
-            .socket_path
-            .as_deref()
-            .unwrap_or("/dev/shm/rcisd.sock");
-        let found = ApiClient::detect_local(socket_path).await;
-        let payload = if found {
+        let host = params.host.trim();
+        try_tool!(validate_not_empty(host, "host"));
+        let token = params.token.as_deref().unwrap_or("").trim();
+        try_tool!(validate_token(token));
+        let result = try_tool!(self.client.detect_device(host, params.port, token).await);
+        let payload = if let Some(d) = result {
             serde_json::json!({
                 "detected": true,
-                "socket_path": socket_path,
+                "host": d.host,
+                "port": d.port,
+                "protocol": d.protocol,
+                "allow_unsecured": d.allow_unsecured,
             })
         } else {
             serde_json::json!({
                 "detected": false,
-                "socket_path": socket_path,
+                "host": host,
                 "hint": format!(
-                    "No rcisd daemon found at '{socket_path}'. Start the daemon (recamera-intellisense-daemon) or pass socket_path explicitly."
+                    "No reCamera API found at {host}{} over HTTPS (validated or self-signed) or HTTP. Verify the device is powered on and reachable.",
+                    params.port.map(|p| format!(":{p}")).unwrap_or_default()
                 ),
             })
         };
@@ -170,30 +174,26 @@ impl ReCameraServer {
         &self,
         Parameters(params): Parameters<AddDeviceParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        try_tool!(validate_not_empty(&params.name, "name"));
-        try_tool!(validate_not_empty(&params.host, "host"));
-        try_tool!(validate_token(&params.token));
+        let name = params.name.trim();
+        let host = params.host.trim();
+        let token = params.token.trim();
+        try_tool!(validate_not_empty(name, "name"));
+        try_tool!(validate_not_empty(host, "host"));
+        try_tool!(validate_token(token));
         let protocol = params.protocol.unwrap_or(Protocol::Http);
-        // Secure-by-default: verify TLS certs unless the caller opts in.
         let allow_unsecured = params.allow_unsecured.unwrap_or(false);
         try_tool!(
             self.client
-                .test_connection(
-                    &params.host,
-                    &params.token,
-                    protocol.as_str(),
-                    allow_unsecured,
-                    params.port
-                )
+                .test_connection(host, token, protocol.as_str(), allow_unsecured, params.port)
                 .await
         );
         let mut store = self.store.write().await;
         try_tool!(
             store
                 .add_device(
-                    &params.name,
-                    &params.host,
-                    &params.token,
+                    name,
+                    host,
+                    token,
                     protocol.as_str(),
                     allow_unsecured,
                     params.port
@@ -202,7 +202,7 @@ impl ReCameraServer {
         );
         Ok(text_result(&format!(
             "Device '{}' added successfully.",
-            params.name
+            name
         )))
     }
 
@@ -219,23 +219,26 @@ impl ReCameraServer {
         &self,
         Parameters(params): Parameters<UpdateDeviceParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        try_tool!(validate_not_empty(&params.device_name, "device_name"));
-        if let Some(token) = &params.token {
+        let device_name = params.device_name.trim();
+        try_tool!(validate_not_empty(device_name, "device_name"));
+        let new_host = params.host.as_deref().map(str::trim);
+        let new_token = params.token.as_deref().map(str::trim);
+        if let Some(token) = new_token {
             try_tool!(validate_token(token));
         }
         let (host, token, protocol, allow_unsecured, port, must_reprobe) = {
             let store = self.store.read().await;
-            let existing = match store.get_device(&params.device_name) {
+            let existing = match store.get_device(device_name) {
                 Some(d) => d,
                 None => {
                     return Ok(CallToolResult::error(vec![Content::text(format!(
                         "Device '{}' not found. Use list_devices to see registered profiles.",
-                        params.device_name
+                        device_name
                     ))]))
                 }
             };
-            let host_changed = params.host.as_ref().is_some_and(|h| h != &existing.host);
-            let token_changed = params.token.as_ref().is_some_and(|t| t != &existing.token);
+            let host_changed = new_host.is_some_and(|h| h != existing.host);
+            let token_changed = new_token.is_some_and(|t| t != existing.token);
             let proto_changed = params
                 .protocol
                 .as_ref()
@@ -244,8 +247,12 @@ impl ReCameraServer {
             let unsec_changed = params
                 .allow_unsecured
                 .is_some_and(|u| u != existing.allow_unsecured);
-            let host = params.host.clone().unwrap_or(existing.host.clone());
-            let token = params.token.clone().unwrap_or(existing.token.clone());
+            let host = new_host
+                .map(|h| h.to_string())
+                .unwrap_or(existing.host.clone());
+            let token = new_token
+                .map(|t| t.to_string())
+                .unwrap_or(existing.token.clone());
             let protocol = params
                 .protocol
                 .map(|p| p.as_str().to_string())
@@ -266,19 +273,12 @@ impl ReCameraServer {
         let mut store = self.store.write().await;
         try_tool!(
             store
-                .replace_device(
-                    &params.device_name,
-                    &host,
-                    &token,
-                    &protocol,
-                    allow_unsecured,
-                    port
-                )
+                .replace_device(device_name, &host, &token, &protocol, allow_unsecured, port)
                 .await
         );
         Ok(text_result(&format!(
             "Device '{}' updated successfully.",
-            params.device_name
+            device_name
         )))
     }
 
@@ -295,17 +295,18 @@ impl ReCameraServer {
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        try_tool!(validate_not_empty(&params.device_name, "device_name"));
+        let device_name = params.device_name.trim();
+        try_tool!(validate_not_empty(device_name, "device_name"));
         let mut store = self.store.write().await;
-        if store.remove_device(&params.device_name).await {
+        if store.remove_device(device_name).await {
             Ok(text_result(&format!(
                 "Device '{}' removed successfully.",
-                params.device_name
+                device_name
             )))
         } else {
             Ok(CallToolResult::error(vec![Content::text(format!(
                 "Device '{}' not found.",
-                params.device_name
+                device_name
             ))]))
         }
     }
@@ -318,13 +319,14 @@ impl ReCameraServer {
         &self,
         Parameters(params): Parameters<DeviceNameParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        try_tool!(validate_not_empty(&params.device_name, "device_name"));
+        let device_name = params.device_name.trim();
+        try_tool!(validate_not_empty(device_name, "device_name"));
         let store = self.store.read().await;
-        match store.get_device(&params.device_name) {
+        match store.get_device(device_name) {
             Some(device) => Ok(try_tool!(json_result(&device))),
             None => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Device '{}' not found.",
-                params.device_name
+                device_name
             ))])),
         }
     }
@@ -1091,8 +1093,9 @@ impl ReCameraServer {
 
 impl ReCameraServer {
     async fn resolve(&self, device_name: &str) -> anyhow::Result<DeviceRecord> {
+        let device_name = device_name.trim();
         anyhow::ensure!(
-            !device_name.trim().is_empty(),
+            !device_name.is_empty(),
             "'device_name' must not be empty. Use list_devices to see registered devices."
         );
         let store = self.store.read().await;

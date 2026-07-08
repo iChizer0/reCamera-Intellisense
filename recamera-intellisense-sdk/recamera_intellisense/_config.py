@@ -44,11 +44,10 @@ def is_valid_host(host: str) -> bool:
 
 
 def validate_token(token: str) -> None:
-    """Accept empty strings for local devices; reject whitespace."""
+    """Empty is allowed (local devices); whitespace is not."""
     if not isinstance(token, str) or (token and any(c.isspace() for c in token)):
         raise ValueError(
-            f"Invalid token: expected a string without whitespace "
-            f"(empty for local devices, non-empty for remote devices), got {token!r}."
+            f"Invalid token: expected a string without whitespace, got {token!r}."
         )
 
 
