@@ -1243,6 +1243,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--no-colour",
+        "--no-color",
+        dest="no_colour",
         action="store_true",
         help="Disable ANSI colour output (same as NO_COLOR=1).",
     )

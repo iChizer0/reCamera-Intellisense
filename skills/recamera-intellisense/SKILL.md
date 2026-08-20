@@ -35,6 +35,9 @@ Drive one or more [reCamera Pro](https://wiki.seeedstudio.com/recamera_pro_getti
 export PYTHONPATH="{baseDir}/scripts"
 alias rci='python3 -m recamera_intellisense'
 
+# (or use the standalone launcher from scripts/setup-skill.py — it writes
+#  ~/.recamera/bin/rci and can optionally add that directory to PATH)
+
 rci <command> key=value ...            # flat (preferred)
 rci <command> --key value              # flags; dashes normalize to underscores
 rci <command> '{"key":"value"}'        # single JSON object (never mix forms)
