@@ -39,11 +39,11 @@ Drive one or more [reCamera Pro](https://wiki.seeedstudio.com/recamera_pro_getti
 The bundled SDK runs without installation. From `{baseDir}` (the skill root):
 
 ```bash
-# One-shot (recommended)
-PYTHONPATH="{baseDir}/scripts" python3 -m recamera_intellisense <command> '<json>'
+# Flat arguments (preferred — no shell-quoted JSON needed)
+PYTHONPATH="{baseDir}/scripts" python3 -m recamera_intellisense <command> key=value ...
 
-# Direct module execution also works
-PYTHONPATH="{baseDir}/scripts" python3 {baseDir}/scripts/recamera_intellisense/device.py <command> '<json>'
+# A single JSON object for the whole call also works
+PYTHONPATH="{baseDir}/scripts" python3 -m recamera_intellisense <command> '{"key":"value"}'
 
 # Convenience alias for a session
 export PYTHONPATH="{baseDir}/scripts"
@@ -53,10 +53,11 @@ rci list_devices
 
 Calling convention (uniform across every command):
 
-- **Input**: exactly one CLI positional argument — a JSON object whose keys match the function's keyword parameters. Omit the argument for commands with no required fields (e.g. `list_devices`).
-- **Success**: pretty-printed JSON on stdout (mutating commands may print nothing); exit code `0`.
-- **Failure**: actionable message on stderr; non-zero exit code. Surface the stderr back to the user and propose one concrete fix.
-- **Discovery**: `python3 -m recamera_intellisense` with no args prints every command with its required/optional keys.
+- **Input forms**: flat `key=value`, `--key value`, or `--key=value` tokens (dashes in keys normalize to underscores), **or** a single JSON object argument. Never mix the two forms in one call.
+- **Types** are coerced from the function's signature: integers (`quota_limit_bytes=-1`), floats, strict booleans (`true/false/yes/no/on/off/1/0` — anything else is rejected), `null`/`none` for optional values, and JSON arrays/objects for structured parameters such as `rules`, `schedule`, `trigger`, `files` (inline, or `@path/to/file.json` — `@-` reads stdin).
+- **Success**: pretty-printed JSON on stdout (a Python `None` result prints `null`); exit code `0`.
+- **Failure**: actionable message **plus the command's usage line and a working example** on stderr; non-zero exit code. Surface the stderr back to the user and propose one concrete fix.
+- **Discovery**: `python3 -m recamera_intellisense` with no args prints every command with its required/optional keys; `python3 -m recamera_intellisense <command> --help` prints that command's usage and an example.
 
 Python use (in-process, preferred for loops):
 
@@ -172,7 +173,7 @@ For `gpio` provide one of `name` or `num`; `state` ∈ {`DISABLED`,`FLOATING`,`P
 
 ## Agent rules
 
-1. Always supply a complete JSON object; never prompt interactively.
+1. Always supply complete arguments in one call (flat `key=value` or a single JSON object); never prompt interactively.
 2. Identify the target by `device_name` (preferred). `list_devices` is cheap — call it if unsure.
 3. Token is a string without whitespace; it may be empty for local/trusted devices that do not require auth.
 4. `label_filter` takes **label names** from `get_detection_models_info` (vision) or `get_active_acoustic_model` (sound). Do not translate names into numeric indexes — the MCP/SDK expects strings.
@@ -184,17 +185,17 @@ For `gpio` provide one of `name` or `num`; `state` ∈ {`DISABLED`,`FLOATING`,`P
 ## Workflows
 
 ### 1 — Onboard a device
-1. (Optional) `detect_local_device '{"host":"192.168.1.100"}'` → returns `{detected, host, port, protocol, allow_unsecured}`.
-2. `add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxx","protocol":"https","allow_unsecured":true}'` (copy `protocol`/`allow_unsecured` from the detection result).
-   Local HTTP device: `add_device '{"name":"local","host":"127.0.0.1","token":""}'`.
+1. (Optional) `detect_local_device host=192.168.1.100` → returns `{detected, host, port, protocol, allow_unsecured}`.
+2. `add_device name=cam1 host=192.168.1.100 token=sk_xxxx protocol=https allow_unsecured=true` (copy `protocol`/`allow_unsecured` from the detection result).
+   Local HTTP device: `add_device name=local host=127.0.0.1 token=`.
 3. `list_devices` to confirm.
 
 ### 2 — Person/object detection by name
-1. `get_detection_models_info` → inspect `labels` to choose a target label.
-2. `set_detection_model '{"device_name":"cam1","model_name":"yolo11n"}'`.
-3. `set_detection_rules '{"device_name":"cam1","rules":[{"name":"front-door-person","label_filter":["person"],"debounce_times":3}]}'`.
+1. `get_detection_models_info device_name=cam1` → inspect `labels` to choose a target label.
+2. `set_detection_model device_name=cam1 model_name=yolo11n`.
+3. `set_detection_rules device_name=cam1 'rules=[{"name":"front-door-person","label_filter":["person"],"debounce_times":3}]'`.
 4. (Optional) `set_detection_schedule` for office hours.
-5. `clear_detection_events` to start fresh.
+5. `clear_detection_events device_name=cam1` to start fresh.
 
 ### 3 — Monitor events (long-running)
 ```python
@@ -210,28 +211,28 @@ while True:
 ```
 
 ### 4 — On-demand snapshot / video
-- **JPG**: `capture_image '{"device_name":"cam1"}'` → returns base64 inline.
-- **MP4**: `start_capture '{"device_name":"cam1","format":"MP4","video_length_seconds":10}'`, then poll `get_capture_status` until `last_capture.status` is terminal, then `fetch_file` with the absolute path assembled from the event's `output_directory` + `file_name`.
+- **JPG**: `capture_image device_name=cam1` → returns base64 inline.
+- **MP4**: `start_capture device_name=cam1 format=MP4 video_length_seconds=10`, then poll `get_capture_status` until `last_capture.status` is terminal, then `fetch_file` with the absolute path assembled from the event's `output_directory` + `file_name`.
 
 ### 5 — Browse and retrieve recordings
-- `list_records '{"device_name":"cam1"}'` → `{entries, offset, limit, total, has_more}`; iterate top-level date folders from `entries`.
-- `list_records '{"device_name":"cam1","path":"2026-04-20","limit":200,"offset":0}'` — drill in, paginate if `has_more` is true.
-- `fetch_record '{"device_name":"cam1","path":"2026-04-20/clip-001.mp4"}'` → returns `{url, note}` for video.
+- `list_records device_name=cam1` → `{entries, offset, limit, total, has_more}`; iterate top-level date folders from `entries`.
+- `list_records device_name=cam1 path=2026-04-20 limit=200 offset=0` — drill in, paginate if `has_more` is true.
+- `fetch_record device_name=cam1 path=2026-04-20/clip-001.mp4` → returns `{url, note}` for video.
 
 ### 6 — Hybrid trigger (GPIO pulse → 5 s MP4)
-```json
-{"device_name":"cam1","trigger":{"kind":"gpio","num":1,"state":"PULL_UP","signal":"FALLING","debounce_ms":50}}
+```bash
+rci set_record_trigger device_name=cam1 'trigger={"kind":"gpio","num":1,"state":"PULL_UP","signal":"FALLING","debounce_ms":50}'
 ```
-Pair with `set_record_config '{"device_name":"cam1","rule_enabled":true,"writer_format":"MP4","writer_interval_ms":0}'` and ensure a storage slot is selected (`set_storage_slot`).
+Pair with `set_record_config device_name=cam1 rule_enabled=true writer_format=MP4 writer_interval_ms=0` and ensure a storage slot is selected (`set_storage_slot`).
 
 ### 7 — GPIO control
-- Read: `get_gpio_value '{"device_name":"cam1","pin_id":2,"debounce_ms":50}'` → prints `0` or `1`.
-- Write: `set_gpio_value '{"device_name":"cam1","pin_id":1,"value":1}'` → prints `1`.
+- Read: `get_gpio_value device_name=cam1 pin_id=2 debounce_ms=50` → prints `0` or `1`.
+- Write: `set_gpio_value device_name=cam1 pin_id=1 value=1` → prints `1`.
 
 ### 8 — Sound-event detection trigger
-1. `get_active_acoustic_model '{"device_name":"cam1"}'` → inspect `labels` (e.g. `["Cat","_background_noise_"]`).
-2. Configure the rule pipeline for the desired writer format, e.g. `set_record_config '{"device_name":"cam1","rule_enabled":true,"writer_format":"MP4","writer_interval_ms":5000}'`.
-3. `set_record_trigger '{"device_name":"cam1","trigger":{"kind":"sed","model_id":"","consecutive_window_ms":0,"confidence_range_filter":[0.5,1.0],"label_filter":["Cat"]}}'`.
+1. `get_active_acoustic_model device_name=cam1` → inspect `labels` (e.g. `["Cat","_background_noise_"]`).
+2. Configure the rule pipeline for the desired writer format, e.g. `set_record_config device_name=cam1 rule_enabled=true writer_format=MP4 writer_interval_ms=5000`.
+3. `set_record_trigger device_name=cam1 'trigger={"kind":"sed","model_id":"","consecutive_window_ms":0,"confidence_range_filter":[0.5,1.0],"label_filter":["Cat"]}'`.
 4. Ensure a storage slot is selected (`get_storage_status` / `set_storage_slot`).
 5. Poll `get_detection_events` for clips triggered by the target sound class.
 
@@ -242,21 +243,21 @@ export PYTHONPATH="{baseDir}/scripts"
 alias rci='python3 -m recamera_intellisense'
 
 rci # list all commands
-rci add_device '{"name":"cam1","host":"192.168.1.100","token":"sk_xxxx"}'
+rci add_device name=cam1 host=192.168.1.100 token=sk_xxxx
 # Local HTTPS device with self-signed cert and no token
-rci add_device '{"name":"local","host":"127.0.0.1","token":"","protocol":"https","allow_unsecured":true}'
+rci add_device name=local host=127.0.0.1 token= protocol=https allow_unsecured=true
 rci list_devices
-rci get_detection_models_info '{"device_name":"cam1"}'
-rci set_detection_model '{"device_name":"cam1","model_name":"yolo11n"}'
-rci set_detection_rules '{"device_name":"cam1","rules":[{"name":"person","label_filter":["person"]}]}'
-rci get_active_acoustic_model '{"device_name":"cam1"}'
-rci set_record_trigger '{"device_name":"cam1","trigger":{"kind":"sed","model_id":"","consecutive_window_ms":0,"confidence_range_filter":[0.5,1.0],"label_filter":["Cat"]}}'
-rci get_detection_events '{"device_name":"cam1","start_unix_ms":1745150000000}'
-rci capture_image '{"device_name":"cam1"}'
-rci list_records '{"device_name":"cam1"}'
-rci fetch_record '{"device_name":"cam1","path":"2026-04-20/evt-001.jpg"}'
-rci get_storage_status '{"device_name":"cam1"}'
-rci set_gpio_value '{"device_name":"cam1","pin_id":1,"value":1}'
+rci get_detection_models_info device_name=cam1
+rci set_detection_model device_name=cam1 model_name=yolo11n
+rci set_detection_rules device_name=cam1 'rules=[{"name":"person","label_filter":["person"]}]'
+rci get_active_acoustic_model device_name=cam1
+rci set_record_trigger device_name=cam1 'trigger={"kind":"sed","model_id":"","consecutive_window_ms":0,"confidence_range_filter":[0.5,1.0],"label_filter":["Cat"]}'
+rci get_detection_events device_name=cam1 start_unix_ms=1745150000000
+rci capture_image device_name=cam1
+rci list_records device_name=cam1
+rci fetch_record device_name=cam1 path=2026-04-20/evt-001.jpg
+rci get_storage_status device_name=cam1
+rci set_gpio_value device_name=cam1 pin_id=1 value=1
 ```
 
 ## Execution checklist (copy for multi-step tasks)

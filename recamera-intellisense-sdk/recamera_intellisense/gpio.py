@@ -79,13 +79,16 @@ def _get_settings(dev, pin_id: int) -> Dict[str, Any]:
     return _parse_settings(data)
 
 
+def _set_settings(dev, pin_id: int, payload: Dict[str, Any]) -> None:
+    resp = _http.post_json(dev, f"{_BASE}/gpio/{pin_id}/settings", payload=payload)
+    _http.expect_ok(resp, "set gpio settings")
+
+
 def _ensure_output(dev, pin_id: int) -> None:
     s = _get_settings(dev, pin_id)
     if s["state"] in _OUTPUT_STATES:
         return
-    _http.post_json(
-        dev, f"{_BASE}/gpio/{pin_id}/settings", payload={"state": _OUTPUT_STATE}
-    )
+    _set_settings(dev, pin_id, {"state": _OUTPUT_STATE})
 
 
 def _ensure_input(dev, pin_id: int, debounce_ms: Optional[int]) -> None:
@@ -102,7 +105,7 @@ def _ensure_input(dev, pin_id: int, debounce_ms: Optional[int]) -> None:
         # Device rejects debounce when edge=none; enable both-edge detection.
         if int(debounce_ms) > 0 and s.get("edge", "none") == "none":
             payload["edge"] = "both"
-    _http.post_json(dev, f"{_BASE}/gpio/{pin_id}/settings", payload=payload)
+    _set_settings(dev, pin_id, payload)
 
 
 def set_gpio_value(device_name: str, *, pin_id: int, value: int) -> int:

@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from . import files as _files
 from . import rule as _rule
 from . import storage as _storage
+from ._coerce import to_bool
 
 __all__ = [
     "get_detection_schedule",
@@ -69,6 +70,8 @@ def set_detection_rules(
     """
     if not isinstance(rules, list):
         raise ValueError("'rules' must be a list of detection-rule dicts.")
+    ensure_writer = to_bool(ensure_writer, "ensure_writer")
+    ensure_storage = to_bool(ensure_storage, "ensure_storage")
     if ensure_storage:
         _storage.ensure_storage(device_name)
     trigger = {"kind": "inference_set", "rules": rules}

@@ -201,7 +201,10 @@ def get_json(
     timeout: float = DEFAULT_TIMEOUT,
 ) -> Any:
     data, _ = _request(device, endpoint, method="GET", params=params, timeout=timeout)
-    return _parse_json(data, f"GET {endpoint}")
+    parsed = _parse_json(data, f"GET {endpoint}")
+    # The device signals failures as HTTP 200 + {"code": N, "message": ...}.
+    expect_ok(parsed, f"GET {endpoint}")
+    return parsed
 
 
 def get_bytes(

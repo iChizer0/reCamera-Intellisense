@@ -16,6 +16,7 @@ import socket
 from typing import Any, Dict, List, Optional
 
 from . import _config
+from ._coerce import to_bool
 from ._config import DeviceRecord
 from ._errors import RecameraError
 
@@ -161,6 +162,7 @@ def add_device(
     _config.validate_host(host)
     _config.validate_token(token)
     _config.validate_protocol(protocol)
+    allow_unsecured = to_bool(allow_unsecured, "allow_unsecured")
     if port is not None:
         port = int(port)
         if not 1 <= port <= 65535:
@@ -187,7 +189,7 @@ def add_device(
         "host": host.strip(),
         "token": token.strip(),
         "protocol": protocol,
-        "allow_unsecured": bool(allow_unsecured),
+        "allow_unsecured": allow_unsecured,
     }
     if port is not None:
         entry["port"] = port
@@ -223,7 +225,7 @@ def update_device(
         _config.validate_protocol(protocol)
         entry["protocol"] = protocol
     if allow_unsecured is not None:
-        entry["allow_unsecured"] = bool(allow_unsecured)
+        entry["allow_unsecured"] = to_bool(allow_unsecured, "allow_unsecured")
     if port is not None:
         port = int(port)
         if not 1 <= port <= 65535:

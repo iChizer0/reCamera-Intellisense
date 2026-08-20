@@ -45,7 +45,7 @@ from .storage import (
     storage_task_submit,
 )
 
-__version__ = "2.0.0"
+__version__ = "2.0.7"
 
 __all__ = [
     "RecameraError",

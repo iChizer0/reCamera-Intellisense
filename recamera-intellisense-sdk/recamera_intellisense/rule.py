@@ -14,6 +14,7 @@ if __name__ == "__main__" and __package__ is None:
 from typing import Any, Dict, List, Optional
 
 from . import _config, _http
+from ._coerce import to_bool
 
 __all__ = [
     "get_rule_system_info",
@@ -112,7 +113,7 @@ def set_record_config(
     """Enable/disable the rule pipeline and set the writer format (`JPG`/`MP4`/`RAW`)."""
     dev = _config.resolve(device_name)
     payload = {
-        "bRuleEnabled": bool(rule_enabled),
+        "bRuleEnabled": to_bool(rule_enabled, "rule_enabled"),
         "dWriterConfig": {
             "sFormat": str(writer_format).upper(),
             "iIntervalMs": int(writer_interval_ms),

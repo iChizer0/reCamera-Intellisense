@@ -14,6 +14,7 @@ if __name__ == "__main__" and __package__ is None:
 from typing import Any, Dict, List, Optional
 
 from . import _config, _http
+from ._coerce import to_bool
 
 __all__ = [
     "get_storage_status",
@@ -133,7 +134,7 @@ def configure_storage_quota(
         "sSlotDevPath": dev_path,
         "dSlotConfig": {
             "iQuotaLimitBytes": int(quota_limit_bytes),
-            "bQuotaRotate": bool(quota_rotate),
+            "bQuotaRotate": to_bool(quota_rotate, "quota_rotate"),
         },
     }
     resp = _http.post_json(dev, PATH_CONTROL, payload=payload)
@@ -176,6 +177,7 @@ def storage_task_submit(
     `sync=True` (submit async and poll :func:`storage_task_status` instead).
     """
     action_canonical = normalize_action(action)
+    sync = to_bool(sync, "sync")
     if sync and action_canonical in ("FORMAT", "FREE_UP"):
         raise ValueError(
             f"Action '{action_canonical}' may take a long time and cannot be run "
