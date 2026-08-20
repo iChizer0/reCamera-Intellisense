@@ -84,6 +84,19 @@ _MODULES = (
 )
 
 
+# Parameters that exist for Python callers but are not valid CLI arguments.
+CLI_EXCLUDE = {"raw"}
+
+
+def _derive_schema(fn: Callable[..., Any]) -> Dict[str, set]:
+    """required = params without defaults; optional = params with defaults."""
+    params = inspect.signature(fn).parameters.values()
+    return {
+        "required": {p.name for p in params if p.default is inspect._empty} - CLI_EXCLUDE,
+        "optional": {p.name for p in params if p.default is not inspect._empty} - CLI_EXCLUDE,
+    }
+
+
 def _collect() -> Tuple[Dict[str, Callable[..., Any]], Dict[str, Dict[str, set]]]:
     cmds: Dict[str, Callable[..., Any]] = {}
     schemas: Dict[str, Dict[str, set]] = {}
@@ -92,8 +105,7 @@ def _collect() -> Tuple[Dict[str, Callable[..., Any]], Dict[str, Dict[str, set]]
             if name in cmds:
                 raise RuntimeError(f"Duplicate CLI command {name!r}")
             cmds[name] = fn
-        for name, spec in getattr(mod, "COMMAND_SCHEMAS", {}).items():
-            schemas[name] = spec
+            schemas[name] = _derive_schema(fn)
     return cmds, schemas
 
 

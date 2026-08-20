@@ -153,15 +153,3 @@ COMMANDS = {
     "set_gpio_value": set_gpio_value,
     "get_gpio_value": get_gpio_value,
 }
-COMMAND_SCHEMAS = {
-    "list_gpios": {"required": {"device_name"}, "optional": set()},
-    "get_gpio_info": {"required": {"device_name", "pin_id"}, "optional": set()},
-    "set_gpio_value": {
-        "required": {"device_name", "pin_id", "value"},
-        "optional": set(),
-    },
-    "get_gpio_value": {
-        "required": {"device_name", "pin_id"},
-        "optional": {"debounce_ms"},
-    },
-}

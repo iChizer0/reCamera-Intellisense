@@ -274,26 +274,3 @@ COMMANDS = {
     "storage_task_status": storage_task_status,
     "storage_task_cancel": storage_task_cancel,
 }
-COMMAND_SCHEMAS = {
-    "get_storage_status": {"required": {"device_name"}, "optional": set()},
-    "set_storage_slot": {
-        "required": {"device_name"},
-        "optional": {"by_dev_path", "by_uuid"},
-    },
-    "configure_storage_quota": {
-        "required": {"device_name", "dev_path", "quota_limit_bytes"},
-        "optional": {"quota_rotate"},
-    },
-    "storage_task_submit": {
-        "required": {"device_name", "action", "dev_path"},
-        "optional": {"sync", "files"},
-    },
-    "storage_task_status": {
-        "required": {"device_name", "action", "dev_path"},
-        "optional": {"task_uid"},
-    },
-    "storage_task_cancel": {
-        "required": {"device_name", "action", "dev_path"},
-        "optional": {"task_uid"},
-    },
-}

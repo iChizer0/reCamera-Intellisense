@@ -416,16 +416,3 @@ COMMANDS = {
     "set_record_trigger": set_record_trigger,
     "activate_http_trigger": activate_http_trigger,
 }
-COMMAND_SCHEMAS = {
-    "get_rule_system_info": {"required": {"device_name"}, "optional": set()},
-    "get_record_config": {"required": {"device_name"}, "optional": set()},
-    "set_record_config": {
-        "required": {"device_name", "rule_enabled", "writer_format"},
-        "optional": {"writer_interval_ms"},
-    },
-    "get_schedule_rule": {"required": {"device_name"}, "optional": set()},
-    "set_schedule_rule": {"required": {"device_name"}, "optional": {"schedule"}},
-    "get_record_trigger": {"required": {"device_name"}, "optional": set()},
-    "set_record_trigger": {"required": {"device_name", "trigger"}, "optional": set()},
-    "activate_http_trigger": {"required": {"device_name"}, "optional": set()},
-}

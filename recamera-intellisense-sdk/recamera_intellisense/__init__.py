@@ -21,11 +21,16 @@ from .device import (
     remove_device,
     update_device,
 )
-from .files import delete_file, fetch_file
+from .files import (
+    clear_intellisense_events,
+    delete_file,
+    fetch_file,
+    get_intellisense_events,
+)
 from .gpio import get_gpio_info, get_gpio_value, list_gpios, set_gpio_value
 from .model import get_detection_model, get_detection_models_info, set_detection_model
 from .records import fetch_record, list_records
-from .relay import close_relay, get_relay_status, open_relay  # noqa: F401
+from .relay import close_relay, get_relay_status, open_relay
 from .rule import (
     activate_http_trigger,
     get_record_config,
@@ -100,4 +105,10 @@ __all__ = [
     # daemon files
     "fetch_file",
     "delete_file",
+    "get_intellisense_events",
+    "clear_intellisense_events",
+    # relay helpers (advanced; managed automatically by records)
+    "open_relay",
+    "get_relay_status",
+    "close_relay",
 ]

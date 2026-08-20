@@ -149,17 +149,3 @@ COMMANDS = {
     "get_detection_events": get_detection_events,
     "clear_detection_events": clear_detection_events,
 }
-COMMAND_SCHEMAS = {
-    "get_detection_schedule": {"required": {"device_name"}, "optional": set()},
-    "set_detection_schedule": {"required": {"device_name"}, "optional": {"schedule"}},
-    "get_detection_rules": {"required": {"device_name"}, "optional": set()},
-    "set_detection_rules": {
-        "required": {"device_name", "rules"},
-        "optional": {"ensure_writer", "ensure_storage"},
-    },
-    "get_detection_events": {
-        "required": {"device_name"},
-        "optional": {"start_unix_ms", "end_unix_ms"},
-    },
-    "clear_detection_events": {"required": {"device_name"}, "optional": set()},
-}

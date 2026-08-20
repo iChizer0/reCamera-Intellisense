@@ -44,6 +44,3 @@ def get_active_acoustic_model(device_name: str) -> Optional[Dict[str, Any]]:
 
 
 COMMANDS = {"get_active_acoustic_model": get_active_acoustic_model}
-COMMAND_SCHEMAS = {
-    "get_active_acoustic_model": {"required": {"device_name"}, "optional": set()}
-}

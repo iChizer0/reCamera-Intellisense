@@ -29,6 +29,12 @@ __all__ = [
     "list_devices",
 ]
 
+
+def _public(record: DeviceRecord) -> DeviceRecord:
+    """External views never expose the bearer token (transport keeps it internally)."""
+    return {k: v for k, v in record.items() if k != "token"}
+
+
 # Connectivity probe
 
 _PROBE_PATH = "/api/v1/recamera-generate-204"
@@ -195,7 +201,7 @@ def add_device(
         entry["port"] = port
     devices[name] = entry
     _config.save_all(devices)
-    return _config.resolve(name)
+    return _public(_config.resolve(name))
 
 
 def update_device(
@@ -246,7 +252,7 @@ def update_device(
 
     devices[device_name] = entry
     _config.save_all(devices)
-    return _config.resolve(device_name)
+    return _public(_config.resolve(device_name))
 
 
 def remove_device(device_name: str) -> bool:
@@ -266,12 +272,12 @@ def get_device(device_name: str) -> Optional[DeviceRecord]:
     devices = _config.load_all()
     if device_name not in devices:
         return None
-    return _config.resolve(device_name)
+    return _public(_config.resolve(device_name))
 
 
 def list_devices() -> List[DeviceRecord]:
     """Every saved device, sorted by name (case-insensitive)."""
-    return _config.list_records_on_disk()
+    return [_public(r) for r in _config.list_records_on_disk()]
 
 
 COMMANDS = {
@@ -281,21 +287,4 @@ COMMANDS = {
     "remove_device": remove_device,
     "get_device": get_device,
     "list_devices": list_devices,
-}
-COMMAND_SCHEMAS = {
-    "detect_local_device": {
-        "required": {"host"},
-        "optional": {"port", "token", "timeout"},
-    },
-    "add_device": {
-        "required": {"name", "host", "token"},
-        "optional": {"protocol", "allow_unsecured", "port"},
-    },
-    "update_device": {
-        "required": {"device_name"},
-        "optional": {"host", "token", "protocol", "allow_unsecured", "port"},
-    },
-    "remove_device": {"required": {"device_name"}, "optional": set()},
-    "get_device": {"required": {"device_name"}, "optional": set()},
-    "list_devices": {"required": set(), "optional": set()},
 }

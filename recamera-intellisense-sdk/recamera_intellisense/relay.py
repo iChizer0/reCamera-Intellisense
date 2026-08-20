@@ -147,4 +147,3 @@ def build_relay_url(device_name: str, uuid: str, rel_path: str = "") -> str:
 
 
 COMMANDS: Dict[str, Any] = {}
-COMMAND_SCHEMAS: Dict[str, Any] = {}

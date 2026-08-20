@@ -116,11 +116,3 @@ COMMANDS = {
     "get_detection_model": get_detection_model,
     "set_detection_model": set_detection_model,
 }
-COMMAND_SCHEMAS = {
-    "get_detection_models_info": {"required": {"device_name"}, "optional": set()},
-    "get_detection_model": {"required": {"device_name"}, "optional": set()},
-    "set_detection_model": {
-        "required": {"device_name"},
-        "optional": {"model_id", "model_name", "fps"},
-    },
-}

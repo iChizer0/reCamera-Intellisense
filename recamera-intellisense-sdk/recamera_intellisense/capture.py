@@ -183,12 +183,3 @@ COMMANDS = {
     "stop_capture": stop_capture,
     "capture_image": capture_image,
 }
-COMMAND_SCHEMAS = {
-    "get_capture_status": {"required": {"device_name"}, "optional": set()},
-    "start_capture": {
-        "required": {"device_name"},
-        "optional": {"output", "format", "video_length_seconds"},
-    },
-    "stop_capture": {"required": {"device_name"}, "optional": set()},
-    "capture_image": {"required": {"device_name"}, "optional": {"output", "timeout"}},
-}

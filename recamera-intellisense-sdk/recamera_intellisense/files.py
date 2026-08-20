@@ -15,6 +15,7 @@ import base64
 from typing import Any, Dict, List, Optional, Union
 
 from . import _config, _http
+from ._const import IMAGE_EXTENSIONS, MAX_INLINE_BYTES
 from ._errors import RecameraError
 
 __all__ = [
@@ -27,8 +28,6 @@ __all__ = [
 PATH_FILE = "/api/v1/file"
 PATH_EVENTS = "/api/v1/intellisense/events"
 PATH_EVENTS_CLEAR = "/api/v1/intellisense/events/clear"
-_MAX_INLINE_BYTES = 5 * 1024 * 1024
-_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 
 def _validate_absolute_path(path: Any) -> str:
@@ -55,7 +54,7 @@ def fetch_file(
     device_name: str,
     *,
     path: str,
-    max_inline_bytes: int = _MAX_INLINE_BYTES,
+    max_inline_bytes: int = MAX_INLINE_BYTES,
     raw: bool = False,
 ) -> Union[bytes, Dict[str, Any]]:
     """Fetch an on-device file.
@@ -68,7 +67,7 @@ def fetch_file(
     body, ct = _http.get_bytes(dev, PATH_FILE, params={"path": path})
     if raw:
         return body
-    is_image = any(path.lower().endswith(ext) for ext in _IMAGE_EXT)
+    is_image = any(path.lower().endswith(ext) for ext in IMAGE_EXTENSIONS)
     if is_image or len(body) <= max_inline_bytes:
         return {
             "path": path,
@@ -139,16 +138,4 @@ COMMANDS = {
     "delete_file": delete_file,
     "get_intellisense_events": get_intellisense_events,
     "clear_intellisense_events": clear_intellisense_events,
-}
-COMMAND_SCHEMAS = {
-    "fetch_file": {
-        "required": {"device_name", "path"},
-        "optional": {"max_inline_bytes"},
-    },
-    "delete_file": {"required": {"device_name", "path"}, "optional": set()},
-    "get_intellisense_events": {
-        "required": {"device_name"},
-        "optional": {"start_unix_ms", "end_unix_ms"},
-    },
-    "clear_intellisense_events": {"required": {"device_name"}, "optional": set()},
 }
