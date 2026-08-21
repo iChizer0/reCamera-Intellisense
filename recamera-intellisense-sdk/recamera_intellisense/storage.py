@@ -95,7 +95,7 @@ def _parse_slot(s: Dict[str, Any], data_dir: str) -> Dict[str, Any]:
     }
 
 
-def get_storage_status(device_name: str) -> List[Dict[str, Any]]:
+def get_storage_status(device_name: Optional[str] = None) -> List[Dict[str, Any]]:
     """List the storage slots (each as a dict)."""
     dev = _config.resolve(device_name)
     data = _http.get_json(dev, PATH_STATUS) or {}
@@ -105,7 +105,7 @@ def get_storage_status(device_name: str) -> List[Dict[str, Any]]:
 
 
 def set_storage_slot(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     by_dev_path: str = "",
     by_uuid: str = "",
@@ -121,7 +121,7 @@ def set_storage_slot(
 
 
 def configure_storage_quota(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     dev_path: str,
     quota_limit_bytes: int,
@@ -165,7 +165,7 @@ def _task_payload(
 
 
 def storage_task_submit(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     action: str,
     dev_path: str,
@@ -193,7 +193,7 @@ def storage_task_submit(
 
 
 def storage_task_status(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     action: str,
     dev_path: str,
@@ -208,7 +208,7 @@ def storage_task_status(
 
 
 def storage_task_cancel(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     action: str,
     dev_path: str,
@@ -222,7 +222,7 @@ def storage_task_cancel(
     return resp if isinstance(resp, dict) else {}
 
 
-def ensure_storage(device_name: str, *, timeout_s: float = 3.0) -> None:
+def ensure_storage(device_name: Optional[str] = None, *, timeout_s: float = 3.0) -> None:
     """Ensure one slot is enabled with rotate-quota on (mirrors Rust `storage::ensure_storage`)."""
     slots = get_storage_status(device_name)
     if not any(s["enabled"] for s in slots):

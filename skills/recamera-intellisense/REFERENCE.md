@@ -34,7 +34,7 @@ Run the command without arguments to print the complete runtime catalogue:
 PYTHONPATH="./scripts" python3 -m recamera_intellisense
 ```
 
-Most device commands require a registered `device_name`. Device records are stored in `~/.recamera/devices.json` with mode `0600`.
+`device_name` is optional on device commands: resolution falls back to `$RECAMERA_DEVICE`, then the sole registered device, then zero-config local detection driven by `$RECAMERA_TOKEN` (see SKILL.md). The tables below list `device_name` as required for readability — it may be omitted whenever the fallback chain resolves. Registry commands (`add/update/remove/get_device`) still require an explicit name. Device records are stored in `~/.recamera/devices.json` with mode `0600`.
 
 ## Device registry
 

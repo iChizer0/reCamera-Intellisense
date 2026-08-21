@@ -51,7 +51,7 @@ def _parse_descriptor(pin_id: int, d: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def list_gpios(device_name: str) -> List[Dict[str, Any]]:
+def list_gpios(device_name: Optional[str] = None) -> List[Dict[str, Any]]:
     """List all GPIO pins with info + current settings."""
     dev = _config.resolve(device_name)
     data = _http.get_json(dev, f"{_BASE}/gpios") or {}
@@ -67,7 +67,7 @@ def list_gpios(device_name: str) -> List[Dict[str, Any]]:
     return out
 
 
-def get_gpio_info(device_name: str, *, pin_id: int) -> Dict[str, Any]:
+def get_gpio_info(device_name: Optional[str] = None, *, pin_id: int) -> Dict[str, Any]:
     """Return info + settings for *pin_id*."""
     dev = _config.resolve(device_name)
     data = _http.get_json(dev, f"{_BASE}/gpio/{int(pin_id)}") or {}
@@ -108,7 +108,7 @@ def _ensure_input(dev, pin_id: int, debounce_ms: Optional[int]) -> None:
     _set_settings(dev, pin_id, payload)
 
 
-def set_gpio_value(device_name: str, *, pin_id: int, value: int) -> int:
+def set_gpio_value(device_name: Optional[str] = None, *, pin_id: int, value: int) -> int:
     """Drive *pin_id* to 0 or 1.
 
     Reconfigures the pin as a push-pull output first if it is not already in an
@@ -124,7 +124,7 @@ def set_gpio_value(device_name: str, *, pin_id: int, value: int) -> int:
 
 
 def get_gpio_value(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     pin_id: int,
     debounce_ms: Optional[int] = _DEBOUNCE_MS_DEFAULT,

@@ -11,7 +11,7 @@ if __name__ == "__main__" and __package__ is None:
 
     raise SystemExit(main())
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from . import _config, _http
 
@@ -23,7 +23,7 @@ PATH_TIME = "/cgi-bin/entry.cgi/system/time"
 PATH_REBOOT = "/cgi-bin/entry.cgi/system/reboot"
 
 
-def get_device_info(device_name: str) -> Dict[str, Any]:
+def get_device_info(device_name: Optional[str] = None) -> Dict[str, Any]:
     """Firmware/hardware identity of the device."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_DEVICE_INFO) or {}
@@ -39,7 +39,7 @@ def _usage_block(d: Dict[str, Any], total: str, used: str, pct: str) -> Dict[str
     return {"total_gb": d.get(total), "used_gb": d.get(used), "usage_percent": d.get(pct)}
 
 
-def get_resource_info(device_name: str) -> Dict[str, Any]:
+def get_resource_info(device_name: Optional[str] = None) -> Dict[str, Any]:
     """CPU/NPU/memory/storage utilisation (percentages 0-100)."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_RESOURCE_INFO) or {}
@@ -53,7 +53,7 @@ def get_resource_info(device_name: str) -> Dict[str, Any]:
     }
 
 
-def get_system_time(device_name: str) -> Dict[str, Any]:
+def get_system_time(device_name: Optional[str] = None) -> Dict[str, Any]:
     """Device clock, timezone, and NTP configuration."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_TIME) or {}
@@ -67,7 +67,7 @@ def get_system_time(device_name: str) -> Dict[str, Any]:
     }
 
 
-def reboot_device(device_name: str) -> None:
+def reboot_device(device_name: Optional[str] = None) -> None:
     """Reboot the device. Disruptive: all streams, captures, and sessions drop."""
     dev = _config.resolve(device_name)
     resp = _http.post_json(dev, PATH_REBOOT)

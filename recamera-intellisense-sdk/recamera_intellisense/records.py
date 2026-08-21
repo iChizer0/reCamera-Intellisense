@@ -36,7 +36,7 @@ def _relay_endpoint(uuid: str, rel: str, *, directory: bool = False) -> str:
 
 
 def list_records(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     path: str = "",
     dev_path: Optional[str] = None,
@@ -125,7 +125,7 @@ def _parse_autoindex(body: bytes) -> List[Dict[str, Any]]:
 
 
 def fetch_record(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     path: str,
     dev_path: Optional[str] = None,
@@ -142,7 +142,7 @@ def fetch_record(
     rel = path.strip("/")
     endpoint = _relay_endpoint(uuid, rel)
     body, ct = _http.get_bytes(dev, endpoint)
-    url = _relay.build_relay_url(device_name, uuid, rel)
+    url = _relay.build_relay_url(dev["name"], uuid, rel)
     is_image = any(rel.lower().endswith(ext) for ext in IMAGE_EXTENSIONS)
     if is_image or len(body) <= max_inline_bytes:
         return {

@@ -43,7 +43,7 @@ def _parse_event(d: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def get_capture_status(device_name: str) -> Dict[str, Any]:
+def get_capture_status(device_name: Optional[str] = None) -> Dict[str, Any]:
     """Current capture state (includes the last event, if any)."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_STATUS) or {}
@@ -79,7 +79,7 @@ def _validate_output_dir(output: Optional[str]) -> Optional[str]:
 
 
 def start_capture(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     output: Optional[str] = None,
     format: str = FORMAT_IMAGE,
@@ -122,7 +122,7 @@ def start_capture(
     return _parse_event(capture)
 
 
-def stop_capture(device_name: str) -> None:
+def stop_capture(device_name: Optional[str] = None) -> None:
     """Stop the running capture (no-op for JPG)."""
     dev = _config.resolve(device_name)
     resp = _http.post_json(dev, PATH_STOP)
@@ -130,7 +130,7 @@ def stop_capture(device_name: str) -> None:
 
 
 def capture_image(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     output: Optional[str] = None,
     timeout: float = _DEFAULT_TIMEOUT_S,

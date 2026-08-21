@@ -158,41 +158,89 @@ def save_all(devices: Dict[str, Dict[str, Any]]) -> None:
         ) from exc
 
 
-def resolve(device_name: str) -> DeviceRecord:
-    """Return a fully-populated :class:`DeviceRecord`; raise if unknown."""
-    if not isinstance(device_name, str) or not device_name.strip():
-        raise RecameraError("'device_name' must not be empty.")
-    devices = load_all()
-    entry = devices.get(device_name)
-    if entry is None:
+LOCAL_DEVICE_NAME = "local"
+
+
+def _record(name: str, entry: Dict[str, Any]) -> DeviceRecord:
+    return DeviceRecord(
+        name=name,
+        host=entry["host"],
+        token=entry["token"],
+        protocol=entry.get("protocol", "http"),
+        allow_unsecured=bool(entry.get("allow_unsecured", False)),
+        port=entry.get("port"),
+    )
+
+
+def resolve(device_name: Optional[str] = None) -> DeviceRecord:
+    """Resolution order: explicit name > $RECAMERA_DEVICE > sole registered device > local detect.
+
+    A blank name counts as omitted. The local-detect path exists for agents
+    running on the camera itself: no registration needed up front.
+    """
+    if device_name is not None and not isinstance(device_name, str):
         raise RecameraError(
-            f"Device '{device_name}' not found. "
-            "Use add_device to register it first (or list_devices to check)."
+            f"'device_name' must be a string, got {type(device_name).__name__}."
         )
-    rec: DeviceRecord = {
-        "name": device_name,
-        "host": entry["host"],
-        "token": entry["token"],
-        "protocol": entry.get("protocol", "http"),
-        "allow_unsecured": bool(entry.get("allow_unsecured", False)),
-        "port": entry.get("port"),
+    devices = load_all()
+    name = (device_name or os.environ.get("RECAMERA_DEVICE") or "").strip()
+    if name:
+        entry = devices.get(name)
+        if entry is None:
+            raise RecameraError(
+                f"Device '{name}' not found. "
+                "Use add_device to register it first (or list_devices to check)."
+            )
+        return _record(name, entry)
+    if len(devices) == 1:
+        name = next(iter(devices))
+        return _record(name, devices[name])
+    if devices:
+        names = ", ".join(sorted(devices))
+        raise RecameraError(
+            f"'device_name' is required: multiple devices registered ({names})."
+        )
+    return _detect_local(devices)
+
+
+def _detect_local(devices: Dict[str, Dict[str, Any]]) -> DeviceRecord:
+    """Probe $RECAMERA_HOST (default loopback) with $RECAMERA_TOKEN and persist it as 'local',
+    so subsequent calls skip detection."""
+    token = os.environ.get("RECAMERA_TOKEN", "")
+    if not token:
+        raise RecameraError(
+            "No devices registered. Run add_device once, "
+            "or set RECAMERA_TOKEN to use the local camera."
+        )
+    from .device import detect_local_device  # deferred: device.py imports this module
+
+    host = os.environ.get("RECAMERA_HOST", "127.0.0.1")
+    port: Optional[int] = None
+    port_raw = os.environ.get("RECAMERA_PORT")
+    if port_raw:
+        try:
+            port = int(port_raw)
+        except ValueError as exc:
+            raise RecameraError(f"Invalid RECAMERA_PORT: {port_raw!r}.") from exc
+    info = detect_local_device(host, port, token=token)
+    if info is None:
+        raise RecameraError(
+            f"Local camera not reachable at {host}. "
+            "Check RECAMERA_HOST, RECAMERA_PORT, and RECAMERA_TOKEN."
+        )
+    entry: Dict[str, Any] = {
+        "host": info["host"],
+        "token": token.strip(),
+        "protocol": info["protocol"],
+        "allow_unsecured": info["allow_unsecured"],
     }
-    return rec
+    if info.get("port") is not None:
+        entry["port"] = info["port"]
+    devices[LOCAL_DEVICE_NAME] = entry
+    save_all(devices)
+    return _record(LOCAL_DEVICE_NAME, entry)
 
 
 def list_records_on_disk() -> List[DeviceRecord]:
     devices = load_all()
-    out: List[DeviceRecord] = []
-    for name in sorted(devices, key=str.lower):
-        entry = devices[name]
-        out.append(
-            DeviceRecord(
-                name=name,
-                host=entry["host"],
-                token=entry["token"],
-                protocol=entry.get("protocol", "http"),
-                allow_unsecured=bool(entry.get("allow_unsecured", False)),
-                port=entry.get("port"),
-            )
-        )
-    return out
+    return [_record(name, devices[name]) for name in sorted(devices, key=str.lower)]

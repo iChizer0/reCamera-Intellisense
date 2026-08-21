@@ -113,7 +113,7 @@ def _normalize_section(spec: _Section, raw: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def get_image_settings(device_name: str) -> Dict[str, Any]:
+def get_image_settings(device_name: Optional[str] = None) -> Dict[str, Any]:
     """Full ISP config: video adjustment, night-to-day, and 3 scene profiles."""
     dev = _config.resolve(device_name)
     d = _fetch_config(dev)
@@ -173,7 +173,7 @@ def _check_section_rules(section: str, merged: Dict[str, Any]) -> None:
 
 
 def set_image_settings(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     section: str,
     values: Dict[str, Any],

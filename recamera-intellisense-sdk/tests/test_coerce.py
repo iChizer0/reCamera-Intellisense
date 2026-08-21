@@ -42,7 +42,7 @@ class BoolBoundaryTests(unittest.TestCase):
         from recamera_intellisense import detection
 
         with self.assertRaises(ValueError):
-            detection.set_detection_rules("cam1", [], ensure_writer="not-a-bool")
+            detection.set_detection_rules("cam1", rules=[], ensure_writer="not-a-bool")
 
     def test_set_detection_rules_string_false_disables_ensures(self) -> None:
         """'false' (string) must mean False, not bool('false') == True."""
@@ -55,7 +55,7 @@ class BoolBoundaryTests(unittest.TestCase):
             patch.object(detection._rule, "get_record_config", lambda *a, **k: calls.__setitem__("config_get", calls["config_get"] + 1) or {"rule_enabled": True, "writer": {"format": "JPG", "interval_ms": 0}}),
             patch.object(detection._rule, "set_record_config", lambda *a, **k: calls.__setitem__("config_set", calls["config_set"] + 1)),
         ):
-            detection.set_detection_rules("cam1", [], ensure_writer="false", ensure_storage="false")
+            detection.set_detection_rules("cam1", rules=[], ensure_writer="false", ensure_storage="false")
         self.assertEqual(calls["storage"], 0, "ensure_storage='false' must not run ensure_storage")
         self.assertEqual(calls["config_get"], 0, "ensure_writer='false' must not touch the writer config")
         self.assertEqual(calls["trigger"], 1, "trigger must still be installed")

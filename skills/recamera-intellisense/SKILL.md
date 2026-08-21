@@ -48,11 +48,15 @@ rci <command> --help                   # usage + a working example, per command
 - **Success**: pretty JSON on stdout (`None` → `null`), exit 0. **Failure**: message **plus usage + example** on stderr, non-zero exit — surface it and propose one fix.
 - **Discovery**: `rci` lists all 50 commands with required/optional keys; `rci list-commands` prints names only.
 
-Python in-process (preferred for loops): `sys.path.insert(0, "{baseDir}/scripts")`, then `from recamera_intellisense import …` — the package exports every CLI command.
+Python in-process (preferred for loops and low-latency voice agents — avoids process spawn + TLS setup per call): `sys.path.insert(0, "{baseDir}/scripts")`, then `from recamera_intellisense import …` — the package exports every CLI command.
+
+## Device resolution
+
+`device_name` is **optional** on every device command. Resolution order: explicit `device_name` → `$RECAMERA_DEVICE` → the sole registered device → zero-config local detect. The last path needs no registration at all: with `$RECAMERA_TOKEN` set (plus optional `$RECAMERA_HOST`, default `127.0.0.1`, and `$RECAMERA_PORT`) the first command probes the local API and persists it as the `local` device, so later calls skip detection — the way an agent running on the camera itself should operate.
 
 ## Command map
 
-All commands take `device_name` (alias `name` accepted) unless noted. Full catalogue, per-command arguments, and key schemas: **[REFERENCE.md](REFERENCE.md)** — or `rci <command> --help` at runtime.
+Full catalogue, per-command arguments, and key schemas: **[REFERENCE.md](REFERENCE.md)** — or `rci <command> --help` at runtime.
 
 - **Device**: `detect_local_device host=…`, `add_device`, `update_device`, `get_device`, `remove_device`, `list_devices` (registration probes the device before persisting).
 - **System**: `get_device_info` (firmware/sensor/serial), `get_resource_info` (CPU/NPU/mem/storage %), `get_system_time`, `reboot_device` (**disruptive** — drops all streams/sessions).

@@ -52,7 +52,7 @@ from .storage import (
 )
 from .system import get_device_info, get_resource_info, get_system_time, reboot_device
 
-__version__ = "2.0.7"
+__version__ = "2.1.0"
 
 __all__ = [
     "RecameraError",

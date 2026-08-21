@@ -41,7 +41,7 @@ def _parse_model(index: int, d: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def get_detection_models_info(device_name: str) -> List[Dict[str, Any]]:
+def get_detection_models_info(device_name: Optional[str] = None) -> List[Dict[str, Any]]:
     """List installed detection models."""
     dev = _config.resolve(device_name)
     data = _http.get_json(dev, PATH_LIST)
@@ -54,7 +54,7 @@ def get_detection_models_info(device_name: str) -> List[Dict[str, Any]]:
     return [_parse_model(i, m) for i, m in enumerate(models) if isinstance(m, dict)]
 
 
-def get_detection_model(device_name: str) -> Optional[Dict[str, Any]]:
+def get_detection_model(device_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Currently-active detection model, or `None`."""
     dev = _config.resolve(device_name)
     data = _http.get_json(dev, PATH_INFERENCE) or {}
@@ -80,7 +80,7 @@ def get_detection_model(device_name: str) -> Optional[Dict[str, Any]]:
 
 
 def set_detection_model(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     model_id: Optional[int] = None,
     model_name: Optional[str] = None,

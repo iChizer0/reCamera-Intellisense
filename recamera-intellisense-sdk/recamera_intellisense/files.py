@@ -51,7 +51,7 @@ def _validate_absolute_path(path: Any) -> str:
 
 
 def fetch_file(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     path: str,
     max_inline_bytes: int = MAX_INLINE_BYTES,
@@ -84,7 +84,7 @@ def fetch_file(
     }
 
 
-def delete_file(device_name: str, *, path: str) -> None:
+def delete_file(device_name: Optional[str] = None, *, path: str) -> None:
     """Delete an on-device file via the daemon."""
     path = _validate_absolute_path(path)
     dev = _config.resolve(device_name)
@@ -92,7 +92,7 @@ def delete_file(device_name: str, *, path: str) -> None:
 
 
 def get_intellisense_events(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     start_unix_ms: Optional[int] = None,
     end_unix_ms: Optional[int] = None,
@@ -117,7 +117,7 @@ def get_intellisense_events(
     return []
 
 
-def clear_intellisense_events(device_name: str) -> None:
+def clear_intellisense_events(device_name: Optional[str] = None) -> None:
     """Clear all buffered intellisense events on the daemon.
 
     Calls `POST /api/v1/intellisense/events/clear` (the daemon does not

@@ -29,13 +29,13 @@ __all__ = [
 ]
 
 
-def get_detection_schedule(device_name: str) -> Optional[List[Dict[str, str]]]:
+def get_detection_schedule(device_name: Optional[str] = None) -> Optional[List[Dict[str, str]]]:
     """Alias for :func:`rule.get_schedule_rule`."""
     return _rule.get_schedule_rule(device_name)
 
 
 def set_detection_schedule(
-    device_name: str,
+    device_name: Optional[str] = None,
     schedule: Optional[List[Dict[str, str]]] = None,
 ) -> None:
     """Alias for :func:`rule.set_schedule_rule`.
@@ -47,7 +47,7 @@ def set_detection_schedule(
     _rule.set_schedule_rule(device_name, schedule)
 
 
-def get_detection_rules(device_name: str) -> List[Dict[str, Any]]:
+def get_detection_rules(device_name: Optional[str] = None) -> List[Dict[str, Any]]:
     """Active INFERENCE_SET rules, or `[]` when the trigger is not INFERENCE_SET."""
     trigger = _rule.get_record_trigger(device_name)
     if trigger["kind"] != "inference_set":
@@ -56,9 +56,9 @@ def get_detection_rules(device_name: str) -> List[Dict[str, Any]]:
 
 
 def set_detection_rules(
-    device_name: str,
-    rules: List[Dict[str, Any]],
+    device_name: Optional[str] = None,
     *,
+    rules: List[Dict[str, Any]],
     ensure_writer: bool = True,
     ensure_storage: bool = True,
 ) -> None:
@@ -75,7 +75,7 @@ def set_detection_rules(
     if ensure_storage:
         _storage.ensure_storage(device_name)
     trigger = {"kind": "inference_set", "rules": rules}
-    _rule.set_record_trigger(device_name, trigger)
+    _rule.set_record_trigger(device_name, trigger=trigger)
     if ensure_writer:
         cfg = _rule.get_record_config(device_name)
         needs_update = (
@@ -91,7 +91,7 @@ def set_detection_rules(
 
 
 def get_detection_events(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     start_unix_ms: Optional[int] = None,
     end_unix_ms: Optional[int] = None,
@@ -136,7 +136,7 @@ def get_detection_events(
     return out
 
 
-def clear_detection_events(device_name: str) -> None:
+def clear_detection_events(device_name: Optional[str] = None) -> None:
     """Alias for :func:`files.clear_intellisense_events`."""
     _files.clear_intellisense_events(device_name)
 

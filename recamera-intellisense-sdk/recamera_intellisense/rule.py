@@ -35,7 +35,7 @@ PATH_RECORD_RULE = "/cgi-bin/entry.cgi/record/rule/record-rule-config"
 PATH_HTTP_ACTIVATE = "/cgi-bin/entry.cgi/record/rule/http-rule-activate"
 
 
-def get_rule_system_info(device_name: str) -> Dict[str, Any]:
+def get_rule_system_info(device_name: Optional[str] = None) -> Dict[str, Any]:
     """Health / availability snapshot of the rule subsystem."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_INFO) or {}
@@ -90,7 +90,7 @@ def _parse_avail_tty(v: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def get_record_config(device_name: str) -> Dict[str, Any]:
+def get_record_config(device_name: Optional[str] = None) -> Dict[str, Any]:
     """Return `{rule_enabled, writer: {format, interval_ms}}`."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_CONFIG) or {}
@@ -105,7 +105,7 @@ def get_record_config(device_name: str) -> Dict[str, Any]:
 
 
 def set_record_config(
-    device_name: str,
+    device_name: Optional[str] = None,
     *,
     rule_enabled: bool,
     writer_format: str,
@@ -124,7 +124,7 @@ def set_record_config(
     _http.expect_ok(resp, "set rule config")
 
 
-def get_schedule_rule(device_name: str) -> Optional[List[Dict[str, str]]]:
+def get_schedule_rule(device_name: Optional[str] = None) -> Optional[List[Dict[str, str]]]:
     """Active-weekdays list, or `None` when the schedule is disabled."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_SCHEDULE) or {}
@@ -140,7 +140,7 @@ def get_schedule_rule(device_name: str) -> Optional[List[Dict[str, str]]]:
 
 
 def set_schedule_rule(
-    device_name: str,
+    device_name: Optional[str] = None,
     schedule: Optional[List[Dict[str, str]]] = None,
 ) -> None:
     """Pass `None` or `[]` (or omit) to disable (rule active 24/7)."""
@@ -160,7 +160,7 @@ def set_schedule_rule(
 _FULL_FRAME_REGION = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
 
 
-def get_record_trigger(device_name: str) -> Dict[str, Any]:
+def get_record_trigger(device_name: Optional[str] = None) -> Dict[str, Any]:
     """Return the current trigger as a tagged-union dict; see :func:`trigger_to_json`."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_RECORD_RULE) or {}
@@ -379,7 +379,9 @@ def trigger_to_json(trigger: Dict[str, Any]) -> Dict[str, Any]:
     return _merge_trigger_payload(None, trigger)
 
 
-def set_record_trigger(device_name: str, trigger: Dict[str, Any]) -> None:
+def set_record_trigger(
+    device_name: Optional[str] = None, *, trigger: Dict[str, Any]
+) -> None:
     """Install *trigger* while preserving other kinds' remembered settings.
 
     Fetches the current `record-rule-config`, copies the sibling sub-objects
@@ -402,7 +404,7 @@ def set_record_trigger(device_name: str, trigger: Dict[str, Any]) -> None:
     _http.expect_ok(resp, "set record trigger")
 
 
-def activate_http_trigger(device_name: str) -> None:
+def activate_http_trigger(device_name: Optional[str] = None) -> None:
     """Fire a one-shot record event on an HTTP-kind trigger."""
     dev = _config.resolve(device_name)
     resp = _http.post_json(dev, PATH_HTTP_ACTIVATE)

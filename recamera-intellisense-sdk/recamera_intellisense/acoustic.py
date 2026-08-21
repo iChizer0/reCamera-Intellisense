@@ -20,7 +20,7 @@ __all__ = ["get_active_acoustic_model"]
 PATH_ACTIVE = "/extension/acousticslab/api/v1/active"
 
 
-def get_active_acoustic_model(device_name: str) -> Optional[Dict[str, Any]]:
+def get_active_acoustic_model(device_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Return the active sound-event model, or `None`.
 
     Keys: `runtime_head_id`, `labels`, `n_classes?`, `sha256?`,
