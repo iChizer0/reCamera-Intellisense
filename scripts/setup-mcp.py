@@ -140,6 +140,14 @@ class Ui:
         print(f"   {cls.dim('hint:')} {msg}", file=sys.stderr)
 
     @classmethod
+    def kv(cls, pairs: list[tuple[str, str]], *, indent: int = 3) -> None:
+        """Aligned key/value block: every value shares one column."""
+        width = max(len(key) for key, _ in pairs) + 2
+        pad = " " * indent
+        for key, value in pairs:
+            print(f"{pad}{key + ':':<{width}} {value}")
+
+    @classmethod
     def rule(cls, title: str = "") -> None:
         bar_length = max(60, len(title) + 4)
         padding = " " * ((bar_length - len(title) - 2) // 2)
@@ -1123,21 +1131,22 @@ def _print_summary(
     failed = list(report.failed)
 
     Ui.rule("Installation complete")
-    print(f"  Binary:  {Ui.cyan(str(binary_path))}")
+    rows = [("Binary", Ui.cyan(str(binary_path)))]
     if configured:
-        print(f"  Clients: {', '.join(a.name for a in configured)}")
+        rows.append(("Clients", ", ".join(a.name for a in configured)))
     if already:
-        print(f"  Already: {', '.join(a.name for a in already)}")
+        rows.append(("Already", ", ".join(a.name for a in already)))
     if skipped:
-        print(f"  Skipped: {', '.join(a.name for a in skipped)}")
+        rows.append(("Skipped", ", ".join(a.name for a in skipped)))
+    Ui.kv(rows)
 
     if failed:
         print()
-        print(f"  {Ui.bold('Manual configuration required (auto-configure failed):')}")
+        print(f"   {Ui.bold('Manual configuration required (auto-configure failed):')}")
         for a in failed:
             print()
-            print(f"  {Ui.bold(a.name)}")
-            print(f"   {Ui.dim(a.manual_instructions(binary_path))}")
+            print(f"   {Ui.bold(a.name)}")
+            print(f"     {Ui.dim(a.manual_instructions(binary_path))}")
     print()
 
 
@@ -1216,8 +1225,8 @@ def do_list_clients(_: argparse.Namespace) -> int:
     for key, agent in sorted(by_key.items()):
         detected = Ui.green("detected") if agent.detect() else Ui.dim("not detected")
         cfg = str(agent.config_path) if agent.config_path else "(none)"
-        print(f"  {Ui.bold(key.ljust(width))}{agent.name:<18} {detected}")
-        print(f"  {' ' * width}{Ui.dim(cfg)}")
+        print(f"   {Ui.bold(key.ljust(width))}{agent.name:<18} {detected}")
+        print(f"   {' ' * width}{Ui.dim(cfg)}")
     return 0
 
 

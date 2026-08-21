@@ -124,6 +124,14 @@ class Ui:
         print(f"   {cls.dim('hint:')} {message}", file=sys.stderr)
 
     @classmethod
+    def kv(cls, pairs: list[tuple[str, str]], *, indent: int = 3) -> None:
+        """Aligned key/value block: every value shares one column."""
+        width = max(len(key) for key, _ in pairs) + 2
+        pad = " " * indent
+        for key, value in pairs:
+            print(f"{pad}{key + ':':<{width}} {value}")
+
+    @classmethod
     def rule(cls, title: str) -> None:
         bar = "─" * max(60, len(title) + 4)
         padding = " " * ((len(bar) - len(title) - 2) // 2)
@@ -806,9 +814,9 @@ def _export_line() -> str:
     return f'export PATH="{BIN_DIR}:$PATH"'
 
 
-def _cli_summary_line(launcher: Path) -> str:
+def _cli_summary_value(launcher: Path) -> str:
     state = "on PATH" if _bin_on_path() else "not on PATH"
-    return f"  CLI:     {Ui.cyan(str(launcher))}  {Ui.dim(f'({state})')}"
+    return f"{Ui.cyan(str(launcher))}  {Ui.dim(f'({state})')}"
 
 
 def maybe_setup_path(with_path: bool) -> None:
@@ -884,7 +892,7 @@ def do_install(args: argparse.Namespace) -> int:
         ):
             Ui.info("Install skipped.")
             if destination.state == "installed":
-                print(_cli_summary_line(install_launcher(destination.paths.skill_dir)))
+                Ui.kv([("CLI", _cli_summary_value(install_launcher(destination.paths.skill_dir)))])
                 maybe_setup_path(args.with_path)
                 print(f"SKILL_PATH={destination.paths.skill_dir}")
             return 0
@@ -892,11 +900,15 @@ def do_install(args: argparse.Namespace) -> int:
         Ui.info(f"Source: {src.label}")
         replaced = install_bundle(src.bundle_dir, destination.paths)
     Ui.rule("Installation complete")
-    print(f"  Skill:   {Ui.cyan(str(destination.paths.skill_dir))}")
-    print(f"  Source:  {src.label}")
-    print(f"  Target:  {destination.label}")
-    print(f"  Status:  {Ui.green('updated' if replaced else 'installed')}")
-    print(_cli_summary_line(install_launcher(destination.paths.skill_dir)))
+    Ui.kv(
+        [
+            ("Skill", Ui.cyan(str(destination.paths.skill_dir))),
+            ("Source", src.label),
+            ("Target", destination.label),
+            ("Status", Ui.green("updated" if replaced else "installed")),
+            ("CLI", _cli_summary_value(install_launcher(destination.paths.skill_dir))),
+        ]
+    )
     maybe_setup_path(args.with_path)
     if anchor_missing or skills_missing:
         print()
@@ -975,12 +987,15 @@ def do_list_destinations(_: argparse.Namespace) -> int:
     Ui.rule("Candidate skill destinations")
     for index, candidate in enumerate(discover_destinations(Path.cwd()), start=1):
         suffix = f" {Ui.green('(recommended)')}" if candidate.recommended else ""
-        print(f"  {index}. {Ui.bold(candidate.label)} {candidate.paths.anchor}{suffix}")
-        print(f"     skill:  {candidate.paths.skill_dir}")
-        print(f"     state:  {_format_state(candidate.state)}")
-        print(f"     note:   {candidate.reason}")
+        print(f"   {index}. {Ui.bold(candidate.label)} {candidate.paths.anchor}{suffix}")
+        rows = [
+            ("skill", str(candidate.paths.skill_dir)),
+            ("state", _format_state(candidate.state)),
+            ("note", candidate.reason),
+        ]
         if candidate.problem and candidate.state == "incomplete":
-            print(f"     issue:  {candidate.problem}")
+            rows.append(("issue", candidate.problem))
+        Ui.kv(rows, indent=6)
     return 0
 
 
