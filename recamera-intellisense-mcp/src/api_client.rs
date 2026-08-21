@@ -10,6 +10,21 @@ use crate::types::{DetectedDevice, DeviceRecord};
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// The device signals failures as HTTP 200 + {"code": N, "message": ...}.
+fn check_envelope(value: &Value) -> Result<()> {
+    let Some(code) = value.get("code").and_then(|v| v.as_i64()) else {
+        return Ok(());
+    };
+    if code == 0 {
+        return Ok(());
+    }
+    let msg = value
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown error");
+    bail!("device error (code={code}): {msg}");
+}
+
 pub struct ApiClient {
     secure_client: Client,
     insecure_client: Client,
@@ -82,7 +97,9 @@ impl ApiClient {
             let body = resp.text().await.unwrap_or_default();
             bail!("HTTP {status}: {body}");
         }
-        Ok(resp.json().await?)
+        let value: Value = resp.json().await?;
+        check_envelope(&value)?;
+        Ok(value)
     }
 
     pub async fn post_json(
@@ -98,6 +115,27 @@ impl ApiClient {
         if let Some(params) = params {
             req = req.query(params);
         }
+        if let Some(payload) = payload {
+            req = req.json(payload);
+        }
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            bail!("HTTP {status}: {body}");
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn put_json(
+        &self,
+        device: &DeviceRecord,
+        endpoint: &str,
+        payload: Option<&Value>,
+    ) -> Result<Value> {
+        let url = Self::api_url(device, endpoint);
+        let client = self.client_for(device);
+        let mut req = Self::with_auth(client.put(&url), &device.token);
         if let Some(payload) = payload {
             req = req.json(payload);
         }
@@ -270,5 +308,26 @@ impl ApiClient {
             }
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn envelope_passes_arrays_codeless_and_code_zero() {
+        assert!(check_envelope(&json!([])).is_ok());
+        assert!(check_envelope(&json!({"lSlots": []})).is_ok());
+        assert!(check_envelope(&json!({"code": 0, "data": 1})).is_ok());
+    }
+
+    #[test]
+    fn envelope_bails_on_nonzero_code() {
+        let err = check_envelope(&json!({"code": 500, "message": "Backend connection failed: -1"}))
+            .unwrap_err();
+        assert!(err.to_string().contains("500"));
+        assert!(err.to_string().contains("Backend connection failed"));
     }
 }

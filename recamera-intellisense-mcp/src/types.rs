@@ -521,6 +521,22 @@ pub struct DeviceNameParams {
     pub device_name: String,
 }
 
+// MARK: MCP params - image (ISP)
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetImageSettingsParams {
+    /// Name of the registered device (also accepted as `name`).
+    #[serde(alias = "name")]
+    pub device_name: String,
+    /// Section to update: video_adjustment | night_to_day | adjustment |
+    /// exposure | backlight | white_balance | enhancement.
+    pub section: String,
+    /// Partial object of section fields to merge (see get_image_settings).
+    pub values: serde_json::Value,
+    /// Scene profile 0/1/2 — required for profile sections, rejected otherwise.
+    pub scene_id: Option<i64>,
+}
+
 // MARK: MCP params - detection
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

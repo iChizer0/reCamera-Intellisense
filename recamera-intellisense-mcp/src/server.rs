@@ -9,7 +9,7 @@ use rmcp::{
 
 use crate::api::{
     acoustic as api_acoustic, capture as api_capture, daemon as api_daemon, gpio as api_gpio,
-    rule as api_rule, storage as api_storage,
+    image as api_image, rule as api_rule, storage as api_storage, system as api_system,
 };
 use crate::api_client::ApiClient;
 use crate::detection;
@@ -338,6 +338,107 @@ impl ReCameraServer {
     async fn list_devices(&self) -> Result<CallToolResult, ErrorData> {
         let store = self.store.read().await;
         Ok(try_tool!(json_result(&store.list_devices())))
+    }
+
+    // MARK: System
+
+    #[tool(
+        description = "Get device identity: serial_number, firmware_version, sensor_model, base_plate_model.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn get_device_info(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let info = try_tool!(api_system::get_device_info(&self.client, &device).await);
+        Ok(try_tool!(json_result(&info)))
+    }
+
+    #[tool(
+        description = "Get CPU/NPU/memory/storage utilisation (0-100) with totals in GB.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn get_resource_info(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let info = try_tool!(api_system::get_resource_info(&self.client, &device).await);
+        Ok(try_tool!(json_result(&info)))
+    }
+
+    #[tool(
+        description = "Get the device clock, timezone, and NTP configuration.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn get_system_time(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let info = try_tool!(api_system::get_system_time(&self.client, &device).await);
+        Ok(try_tool!(json_result(&info)))
+    }
+
+    #[tool(
+        description = "Reboot the device. Disruptive: all streams, captures, and sessions drop.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn reboot_device(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        try_tool!(api_system::reboot_device(&self.client, &device).await);
+        Ok(text_result("Reboot command accepted."))
+    }
+
+    // MARK: Image (ISP)
+
+    #[tool(
+        description = "Get the full ISP config: video_adjustment, night_to_day, and 3 scene profiles (adjustment, exposure, backlight, white_balance, enhancement).",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn get_image_settings(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let info = try_tool!(api_image::get_settings(&self.client, &device).await);
+        Ok(try_tool!(json_result(&info)))
+    }
+
+    #[tool(
+        description = "Merge a partial 'values' object into one ISP section (read-modify-write). Sections: video_adjustment, night_to_day, adjustment, exposure, backlight, white_balance, enhancement. scene_id (0/1/2) required for profile sections. Validates ranges, enums, and the BLC/HDR/HLC mutual exclusion.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn set_image_settings(
+        &self,
+        Parameters(params): Parameters<SetImageSettingsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        try_tool!(
+            api_image::set_settings(
+                &self.client,
+                &device,
+                params.section.trim(),
+                &params.values,
+                params.scene_id
+            )
+            .await
+        );
+        Ok(text_result("Image settings updated."))
     }
 
     // MARK: Detection

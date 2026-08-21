@@ -5,10 +5,12 @@ pub mod acoustic;
 pub mod capture;
 pub mod daemon;
 pub mod gpio;
+pub mod image;
 pub mod model;
 pub mod relay;
 pub mod rule;
 pub mod storage;
+pub mod system;
 
 use anyhow::{bail, Result};
 use serde_json::Value;
