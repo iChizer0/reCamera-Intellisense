@@ -193,6 +193,40 @@ Actions are `FORMAT`, `FREE_UP`, `EJECT`, and `REMOVE_FILES_OR_DIRECTORIES`. `FO
 
 `snapshot_path` (when present) is an absolute on-device path — feed it to `fetch_file`, not `fetch_record`.
 
+## System
+
+| Command | Required keys | Optional keys |
+|---|---|---|
+| `get_device_info` | `device_name` | — |
+| `get_resource_info` | `device_name` | — |
+| `get_system_time` | `device_name` | — |
+| `reboot_device` | `device_name` | — |
+
+`get_device_info` → `{serial_number, firmware_version, sensor_model, base_plate_model}`. `get_resource_info` → `{cpu_usage, npu_usage, memory: {total_gb, used_gb, usage_percent}, storage: {...}}`. `reboot_device` is disruptive: all streams, captures, and sessions drop.
+
+## Image (ISP)
+
+| Command | Required keys | Optional keys |
+|---|---|---|
+| `get_image_settings` | `device_name` | — |
+| `set_image_settings` | `device_name`, `section`, `values` | `scene_id` |
+
+`get_image_settings` returns the full config: `video_adjustment`, `night_to_day`, and `profiles` (3 entries: general/day/night), each with `adjustment`, `exposure`, `backlight`, `white_balance`, `enhancement`.
+
+`set_image_settings` merges a partial `values` object into one section (read-modify-write) and PUTs it. `scene_id` (0/1/2) is required for profile sections and rejected for the two global ones. Sections and fields:
+
+| Section | Fields (friendly → device) |
+|---|---|
+| `video_adjustment` | `rotation` (0/90/180/270), `flip` (close/mirror/flip/centrosymmetric), `power_line_frequency` (PAL(50HZ)/NTSC(60HZ)) |
+| `night_to_day` | `mode` (0=auto/1=scheduled/2=fixed), `filter_level` (0–2), `filter_time` (1–60 s), `dawn_time`/`dusk_time` (0–86400 s, dusk > dawn), `profile_select` (0–2) |
+| `adjustment` | `brightness`, `contrast`, `hue`, `saturation`, `sharpness` (0–100) |
+| `exposure` | `exposure_mode`, `gain_mode` (auto/manual), `exposure_time` (fraction string like `1/60`), `exposure_gain` (0–100) |
+| `backlight` | `blc_region`/`hdr`/`hlc` (open/close — **mutually exclusive**, max one open), `blc_strength`, `dark_boost_level` (0–100), `hdr_level` (=1), `hlc_level` (1–100) |
+| `white_balance` | `style` (auto/manual/daylight/streetlamp/outdoor), `color_temperature` (2800–7500 K) |
+| `enhancement` | `noise_reduce_mode` (0/1), `spatial_denoise_level`, `temporal_denoise_level` (0–100) |
+
+Example: `recamera set_image_settings device_name=cam1 section=video_adjustment 'values={"rotation":180}'`
+
 ## Python API
 
 The same functions are available in-process:
@@ -205,4 +239,4 @@ from recamera_intellisense import capture_image, get_storage_status
 image = capture_image(device_name="cam1")
 ```
 
-The public SDK exports the 44 CLI commands listed above (each function's signature is its schema — the CLI derives required/optional arguments and types from it). `relay.py` also has internal helpers used by record browsing; relay lifecycle is managed automatically by `list_records` and `fetch_record`.
+The public SDK exports the 50 CLI commands listed above (each function's signature is its schema — the CLI derives required/optional arguments and types from it). `relay.py` also has internal helpers used by record browsing; relay lifecycle is managed automatically by `list_records` and `fetch_record`.

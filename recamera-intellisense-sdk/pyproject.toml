@@ -22,3 +22,44 @@ recamera = "recamera_intellisense._cli:main"
 
 [tool.setuptools]
 packages = ["recamera_intellisense"]
+
+# Lint policy: substance over style. typing.Dict/List/Optional stay (py3.9
+# idiom used consistently); the per-module direct-exec shim intentionally
+# precedes imports; complexity/dispatch density is by design.
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "B", "SIM", "RET", "PIE", "RUF", "C4", "PERF"]
+ignore = [
+    "E501",     # line length enforced via pylint (100)
+    "B004",     # getattr(fn, '__call__') needs the bound attr, not callable()
+    "RUF022",   # __all__ grouped by domain, not alphabetised
+    "PERF203",  # try/except in is_valid_host loop is clearer than restructuring
+    "SIM105",   # try/except-pass reads fine here
+    "SIM117",   # nested `with` in tests is clearer than mega-with
+    "RUF059",   # intentional unused unpacks in tests
+]
+
+[tool.mypy]
+ignore_missing_imports = true
+warn_unused_ignores = true
+
+[tool.pylint.messages_control]
+disable = [
+    "missing-docstring",
+    "too-few-public-methods",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-locals",
+    "too-many-return-statements",
+    "too-many-branches",
+    "too-many-statements",
+    "wrong-import-position",   # direct-exec shim pattern
+    "cyclic-import",           # false positive from the same shim
+    "import-outside-toplevel", # lazy stdlib imports are deliberate
+    "redefined-builtin",       # `format` is a stable public API parameter
+    "duplicate-code",
+    "fixme",
+]

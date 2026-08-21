@@ -46,7 +46,7 @@ rci <command> --help                   # usage + a working example, per command
 
 - **Types** coerce from the function signature: ints (`quota_limit_bytes=-1`), floats, strict booleans (`true/false/yes/no/on/off/1/0`), `null`/`none` for optionals, JSON arrays/objects for structured params (`rules`, `schedule`, `trigger`, `files`) — inline or `@file.json` (`@-` = stdin; `@@` = literal `@`).
 - **Success**: pretty JSON on stdout (`None` → `null`), exit 0. **Failure**: message **plus usage + example** on stderr, non-zero exit — surface it and propose one fix.
-- **Discovery**: `rci` lists all 44 commands with required/optional keys; `rci list-commands` prints names only.
+- **Discovery**: `rci` lists all 50 commands with required/optional keys; `rci list-commands` prints names only.
 
 Python in-process (preferred for loops): `sys.path.insert(0, "{baseDir}/scripts")`, then `from recamera_intellisense import …` — the package exports every CLI command.
 
@@ -55,6 +55,8 @@ Python in-process (preferred for loops): `sys.path.insert(0, "{baseDir}/scripts"
 All commands take `device_name` (alias `name` accepted) unless noted. Full catalogue, per-command arguments, and key schemas: **[REFERENCE.md](REFERENCE.md)** — or `rci <command> --help` at runtime.
 
 - **Device**: `detect_local_device host=…`, `add_device`, `update_device`, `get_device`, `remove_device`, `list_devices` (registration probes the device before persisting).
+- **System**: `get_device_info` (firmware/sensor/serial), `get_resource_info` (CPU/NPU/mem/storage %), `get_system_time`, `reboot_device` (**disruptive** — drops all streams/sessions).
+- **Image (ISP)**: `get_image_settings` (full config: video adjustment, night-to-day, 3 scene profiles), `set_image_settings section=… scene_id=… 'values={…}'` — sections: `video_adjustment`, `night_to_day`, `adjustment`, `exposure`, `backlight`, `white_balance`, `enhancement`; read-modify-write with validation (incl. BLC/HDR/HLC mutual exclusion).
 - **Detection**: `get_detection_models_info`, `get/set_detection_model` (by `model_id` or `model_name`), `get/set_detection_schedule`, `get/set_detection_rules`, `get_detection_events` (`start_unix_ms`/`end_unix_ms`), `clear_detection_events`. Facade: `set_detection_rules` installs the `inference_set` trigger and ensures writer + storage by default; `get_detection_rules` returns `[]` when the active trigger is not `inference_set`.
 - **Acoustic**: `get_active_acoustic_model` → labels for the `sed` trigger.
 - **Rule system**: `get_rule_system_info`, `get/set_record_config`, `get/set_schedule_rule`, `get/set_record_trigger`, `activate_http_trigger`. Trigger kinds: `inference_set`, `timer`, `gpio`, `tty`, `http`, `always_on`, `sed` — only one is active at a time.

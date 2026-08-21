@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from . import _config, _http
 from ._coerce import to_bool
+from ._errors import RecameraError
 
 __all__ = [
     "get_rule_system_info",
@@ -160,7 +161,7 @@ _FULL_FRAME_REGION = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
 
 
 def get_record_trigger(device_name: str) -> Dict[str, Any]:
-    """Return the current trigger as a tagged-union dict; see :func:`trigger_to_json` for each shape."""
+    """Return the current trigger as a tagged-union dict; see :func:`trigger_to_json`."""
     dev = _config.resolve(device_name)
     d = _http.get_json(dev, PATH_RECORD_RULE) or {}
     return parse_trigger(d)
@@ -255,9 +256,9 @@ def _validate_confidence_range(rule_name: Any, confidence: List[Any]) -> None:
     """Enforce `confidence_range_filter = [min, max]` with both ∈ [0, 1] and min ≤ max."""
     label = f"rule {rule_name!r}" if rule_name else "rule"
     if not isinstance(confidence, list) or len(confidence) != 2:
+        detail = len(confidence) if isinstance(confidence, list) else type(confidence).__name__
         raise ValueError(
-            f"{label}: confidence_range_filter must be exactly [min, max]; "
-            f"got {len(confidence) if isinstance(confidence, list) else type(confidence).__name__} value(s)"
+            f"{label}: confidence_range_filter must be exactly [min, max]; got {detail} value(s)"
         )
     try:
         lo, hi = float(confidence[0]), float(confidence[1])
@@ -265,7 +266,7 @@ def _validate_confidence_range(rule_name: Any, confidence: List[Any]) -> None:
         raise ValueError(
             f"{label}: confidence_range_filter entries must be numeric; got {confidence!r}"
         ) from exc
-    if not (0.0 <= lo <= 1.0) or not (0.0 <= hi <= 1.0):
+    if lo < 0.0 or lo > 1.0 or hi < 0.0 or hi > 1.0:
         raise ValueError(
             f"{label}: confidence_range_filter values must be within [0.0, 1.0]; got [{lo}, {hi}]"
         )
@@ -322,7 +323,7 @@ def _trigger_patch(trigger: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
         confidence = list(trigger.get("confidence_range_filter", [0.0, 1.0]))
         _validate_confidence_range("sed", confidence)
         consecutive_window_ms = int(trigger.get("consecutive_window_ms", 0))
-        if not (0 <= consecutive_window_ms <= 60000):
+        if consecutive_window_ms < 0 or consecutive_window_ms > 60000:
             raise ValueError(
                 f"sed: consecutive_window_ms must be within [0, 60000]; got {consecutive_window_ms}"
             )
@@ -364,11 +365,13 @@ def trigger_to_json(trigger: Dict[str, Any]) -> Dict[str, Any]:
     Accepted shapes::
 
         {"kind": "timer", "interval_seconds": 60}
-        {"kind": "gpio", "name": "GPIO_01", "state": "FLOATING", "signal": "RISING", "debounce_ms": 0}
+        {"kind": "gpio", "name": "GPIO_01", "state": "FLOATING",
+         "signal": "RISING", "debounce_ms": 0}
         {"kind": "inference_set", "rules": [...]}
         {"kind": "http"} | {"kind": "always_on"}
         {"kind": "tty", "name": "...", "command": "..."}
-        {"kind": "sed", "model_id": "", "consecutive_window_ms": 0, "confidence_range_filter": [0.5, 1.0], "label_filter": ["Cat"]}
+        {"kind": "sed", "model_id": "", "consecutive_window_ms": 0,
+         "confidence_range_filter": [0.5, 1.0], "label_filter": ["Cat"]}
 
     Prefer :func:`set_record_trigger`, which performs a read-modify-write so
     other trigger kinds' remembered settings survive a kind switch.
@@ -390,7 +393,7 @@ def set_record_trigger(device_name: str, trigger: Dict[str, Any]) -> None:
     dev = _config.resolve(device_name)
     try:
         current = _http.get_json(dev, PATH_RECORD_RULE)
-    except Exception:
+    except RecameraError:  # fresh/unreachable device: degrade to full-replace
         current = None
     payload = _merge_trigger_payload(
         current if isinstance(current, dict) else None, trigger

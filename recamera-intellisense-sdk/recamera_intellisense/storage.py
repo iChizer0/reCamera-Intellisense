@@ -11,6 +11,7 @@ if __name__ == "__main__" and __package__ is None:
 
     raise SystemExit(main())
 
+import time
 from typing import Any, Dict, List, Optional
 
 from . import _config, _http
@@ -223,8 +224,6 @@ def storage_task_cancel(
 
 def ensure_storage(device_name: str, *, timeout_s: float = 3.0) -> None:
     """Ensure one slot is enabled with rotate-quota on (mirrors Rust `storage::ensure_storage`)."""
-    import time
-
     slots = get_storage_status(device_name)
     if not any(s["enabled"] for s in slots):
         default = next(

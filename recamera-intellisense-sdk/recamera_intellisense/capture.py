@@ -135,7 +135,7 @@ def capture_image(
     output: Optional[str] = None,
     timeout: float = _DEFAULT_TIMEOUT_S,
 ) -> Dict[str, Any]:
-    """Start a JPG capture, poll to completion (terminal states `COMPLETED/FAILED/INTERRUPTED/CANCELED`),
+    """Start a JPG capture, poll until terminal (`COMPLETED`/`FAILED`/`INTERRUPTED`/`CANCELED`),
     fetch the file via the daemon, and return `{event, path, size, content_base64}`.
     """
     # Resolve output dir via current storage status if not supplied.
@@ -149,7 +149,7 @@ def capture_image(
                 base = slot["mount_path"].rstrip("/")
                 data_dir = slot.get("data_dir", "").strip("/")
                 output = f"{base}/{data_dir}" if data_dir else base
-        except Exception:
+        except RecameraError:
             output = None
     output = output or OUTPUT_FALLBACK
 
@@ -169,6 +169,7 @@ def capture_image(
     from .files import fetch_file
 
     blob = fetch_file(device_name, path=remote, raw=True)
+    assert isinstance(blob, bytes)  # raw=True contract
     return {
         "event": final,
         "path": remote,

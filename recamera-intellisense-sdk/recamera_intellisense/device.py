@@ -13,7 +13,7 @@ if __name__ == "__main__" and __package__ is None:
 
 import http.client
 import socket
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from . import _config
 from ._coerce import to_bool
@@ -32,7 +32,7 @@ __all__ = [
 
 def _public(record: DeviceRecord) -> DeviceRecord:
     """External views never expose the bearer token (transport keeps it internally)."""
-    return {k: v for k, v in record.items() if k != "token"}
+    return cast(DeviceRecord, {k: v for k, v in record.items() if k != "token"})
 
 
 # Connectivity probe
@@ -70,7 +70,7 @@ def _probe(
             if allow_unsecured:
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
-            conn = http.client.HTTPSConnection(
+            conn: http.client.HTTPConnection = http.client.HTTPSConnection(
                 connect_host, port, timeout=timeout, context=ctx
             )
         else:
@@ -177,7 +177,8 @@ def add_device(
     devices = _config.load_all()
     if name in devices:
         raise RecameraError(
-            f"Device '{name}' already exists. Use update_device to modify it, or remove_device first."
+            f"Device '{name}' already exists. Use update_device to modify it, "
+            "or remove_device first."
         )
     probe_port = port if port is not None else (443 if protocol == "https" else 80)
     err = _probe(

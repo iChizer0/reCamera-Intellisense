@@ -11,7 +11,7 @@ if __name__ == "__main__" and __package__ is None:
 
     raise SystemExit(main())
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from . import _config, _http
 

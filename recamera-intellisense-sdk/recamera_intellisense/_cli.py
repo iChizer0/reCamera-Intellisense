@@ -44,11 +44,13 @@ if __name__ == "__main__" and __package__ is None:
         device,
         files,
         gpio,
+        image,
         model,
         records,
         relay,
         rule,
         storage,
+        system,
     )
     from recamera_intellisense._coerce import to_bool
     from recamera_intellisense._errors import RecameraError
@@ -60,17 +62,21 @@ else:
         device,
         files,
         gpio,
+        image,
         model,
         records,
         relay,
         rule,
         storage,
+        system,
     )
     from ._coerce import to_bool
     from ._errors import RecameraError
 
 _MODULES = (
     device,
+    system,
+    image,
     rule,
     storage,
     relay,
@@ -91,9 +97,10 @@ CLI_EXCLUDE = {"raw"}
 def _derive_schema(fn: Callable[..., Any]) -> Dict[str, set]:
     """required = params without defaults; optional = params with defaults."""
     params = inspect.signature(fn).parameters.values()
+    empty = inspect.Parameter.empty
     return {
-        "required": {p.name for p in params if p.default is inspect._empty} - CLI_EXCLUDE,
-        "optional": {p.name for p in params if p.default is not inspect._empty} - CLI_EXCLUDE,
+        "required": {p.name for p in params if p.default is empty} - CLI_EXCLUDE,
+        "optional": {p.name for p in params if p.default is not empty} - CLI_EXCLUDE,
     }
 
 
@@ -119,20 +126,47 @@ EXAMPLES: Dict[str, str] = {
     "remove_device": "recamera remove_device device_name=cam1",
     "get_device": "recamera get_device device_name=cam1",
     "list_devices": "recamera list_devices",
+    "get_device_info": "recamera get_device_info device_name=cam1",
+    "get_resource_info": "recamera get_resource_info device_name=cam1",
+    "get_system_time": "recamera get_system_time device_name=cam1",
+    "reboot_device": "recamera reboot_device device_name=cam1",
+    "get_image_settings": "recamera get_image_settings device_name=cam1",
+    "set_image_settings": (
+        "recamera set_image_settings device_name=cam1 "
+        "section=video_adjustment 'values={\"rotation\":180}'"
+    ),
     "get_rule_system_info": "recamera get_rule_system_info device_name=cam1",
     "get_record_config": "recamera get_record_config device_name=cam1",
-    "set_record_config": "recamera set_record_config device_name=cam1 rule_enabled=true writer_format=JPG writer_interval_ms=0",
+    "set_record_config": (
+        "recamera set_record_config device_name=cam1 "
+        "rule_enabled=true writer_format=JPG writer_interval_ms=0"
+    ),
     "get_schedule_rule": "recamera get_schedule_rule device_name=cam1",
     "set_schedule_rule": "recamera set_schedule_rule device_name=cam1 schedule=null",
     "get_record_trigger": "recamera get_record_trigger device_name=cam1",
-    "set_record_trigger": "recamera set_record_trigger device_name=cam1 'trigger={\"kind\":\"timer\",\"interval_seconds\":60}'",
+    "set_record_trigger": (
+        "recamera set_record_trigger device_name=cam1 "
+        "'trigger={\"kind\":\"timer\",\"interval_seconds\":60}'"
+    ),
     "activate_http_trigger": "recamera activate_http_trigger device_name=cam1",
     "get_storage_status": "recamera get_storage_status device_name=cam1",
     "set_storage_slot": "recamera set_storage_slot device_name=cam1 by_dev_path=/dev/mmcblk0p8",
-    "configure_storage_quota": "recamera configure_storage_quota device_name=cam1 dev_path=/dev/mmcblk0p8 quota_limit_bytes=-1 quota_rotate=true",
-    "storage_task_submit": "recamera storage_task_submit device_name=cam1 action=FREE_UP dev_path=/dev/mmcblk0p8",
-    "storage_task_status": "recamera storage_task_status device_name=cam1 action=FREE_UP dev_path=/dev/mmcblk0p8",
-    "storage_task_cancel": "recamera storage_task_cancel device_name=cam1 action=FREE_UP dev_path=/dev/mmcblk0p8",
+    "configure_storage_quota": (
+        "recamera configure_storage_quota device_name=cam1 "
+        "dev_path=/dev/mmcblk0p8 quota_limit_bytes=-1 quota_rotate=true"
+    ),
+    "storage_task_submit": (
+        "recamera storage_task_submit device_name=cam1 "
+        "action=FREE_UP dev_path=/dev/mmcblk0p8"
+    ),
+    "storage_task_status": (
+        "recamera storage_task_status device_name=cam1 "
+        "action=FREE_UP dev_path=/dev/mmcblk0p8"
+    ),
+    "storage_task_cancel": (
+        "recamera storage_task_cancel device_name=cam1 "
+        "action=FREE_UP dev_path=/dev/mmcblk0p8"
+    ),
     "list_records": "recamera list_records device_name=cam1 path=2026-04-20 limit=100",
     "fetch_record": "recamera fetch_record device_name=cam1 path=2026-04-20/clip-001.jpg",
     "get_capture_status": "recamera get_capture_status device_name=cam1",
@@ -145,17 +179,35 @@ EXAMPLES: Dict[str, str] = {
     "get_gpio_value": "recamera get_gpio_value device_name=cam1 pin_id=106 debounce_ms=100",
     "get_detection_models_info": "recamera get_detection_models_info device_name=cam1",
     "get_detection_model": "recamera get_detection_model device_name=cam1",
-    "set_detection_model": "recamera set_detection_model device_name=cam1 model_name=yolo11n fps=30",
+    "set_detection_model": (
+        "recamera set_detection_model "
+        "device_name=cam1 model_name=yolo11n fps=30"
+    ),
     "get_active_acoustic_model": "recamera get_active_acoustic_model device_name=cam1",
     "get_detection_schedule": "recamera get_detection_schedule device_name=cam1",
     "set_detection_schedule": "recamera set_detection_schedule device_name=cam1 schedule=null",
     "get_detection_rules": "recamera get_detection_rules device_name=cam1",
-    "set_detection_rules": "recamera set_detection_rules device_name=cam1 'rules=[{\"name\":\"person\",\"label_filter\":[\"person\"]}]'",
-    "get_detection_events": "recamera get_detection_events device_name=cam1 start_unix_ms=1745150000000",
+    "set_detection_rules": (
+        "recamera set_detection_rules device_name=cam1 "
+        "'rules=[{\"name\":\"person\",\"label_filter\":[\"person\"]}]'"
+    ),
+    "get_detection_events": (
+        "recamera get_detection_events "
+        "device_name=cam1 start_unix_ms=1745150000000"
+    ),
     "clear_detection_events": "recamera clear_detection_events device_name=cam1",
-    "fetch_file": "recamera fetch_file device_name=cam1 path=/mnt/rc_mmcblk0p8/reCamera/snapshot.jpg",
-    "delete_file": "recamera delete_file device_name=cam1 path=/mnt/rc_mmcblk0p8/reCamera/snapshot.jpg",
-    "get_intellisense_events": "recamera get_intellisense_events device_name=cam1 start_unix_ms=1745150000000",
+    "fetch_file": (
+        "recamera fetch_file device_name=cam1 "
+        "path=/mnt/rc_mmcblk0p8/reCamera/snapshot.jpg"
+    ),
+    "delete_file": (
+        "recamera delete_file device_name=cam1 "
+        "path=/mnt/rc_mmcblk0p8/reCamera/snapshot.jpg"
+    ),
+    "get_intellisense_events": (
+        "recamera get_intellisense_events "
+        "device_name=cam1 start_unix_ms=1745150000000"
+    ),
     "clear_intellisense_events": "recamera clear_intellisense_events device_name=cam1",
 }
 
@@ -174,7 +226,7 @@ def _hints(fn: Callable[..., Any]) -> Dict[str, Any]:
         return {}
     try:
         hints = typing.get_type_hints(target)
-    except Exception:
+    except (NameError, TypeError, AttributeError):  # unresolvable annotations
         return {}
     hints.pop("return", None)
     return hints
@@ -304,7 +356,7 @@ def _coerce(cmd: str, key: str, value: Any, hint: Any) -> Any:
     if hint is str:
         if isinstance(value, str):
             return value
-        if isinstance(value, bool) or value is None or isinstance(value, (list, dict)):
+        if isinstance(value, (bool, list, dict)) or value is None:
             raise _UsageError(f"{where} must be a string; got {value!r}")
         return str(value)  # int/float spellings are unambiguous (e.g. a numeric name)
     if origin is list or hint is list:
@@ -356,11 +408,11 @@ def _parse_cli(name: str, argv: Iterable[str]) -> Dict[str, Any]:
             ) from exc
         if not isinstance(data, dict):
             raise _UsageError(f"{name}: JSON arguments must be an object.")
-        kwargs: Dict[str, Any] = {}
+        parsed: Dict[str, Any] = {}
         for k, v in data.items():
             key = str(k).replace("-", "_")
-            kwargs[key] = _coerce(name, key, v, hints.get(key))
-        return kwargs
+            parsed[key] = _coerce(name, key, v, hints.get(key))
+        return parsed
 
     if any(t.lstrip().startswith("{") for t in tokens):
         raise _UsageError(

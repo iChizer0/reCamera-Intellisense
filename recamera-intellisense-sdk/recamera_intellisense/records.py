@@ -157,7 +157,8 @@ def fetch_record(
         "url": url,
         "size": len(body),
         "content_type": ct,
-        "note": "payload exceeds inline budget; fetch the URL directly (relay token is bearer-free).",
+        "note": "payload exceeds inline budget; fetch the URL directly "
+        "(relay token is bearer-free).",
     }
 
 

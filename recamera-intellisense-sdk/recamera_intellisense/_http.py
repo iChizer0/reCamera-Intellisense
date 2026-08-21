@@ -218,12 +218,13 @@ def get_bytes(
     return _request(device, endpoint, method="GET", params=params, timeout=timeout)
 
 
-def post_json(
+def _send_json(
     device: DeviceRecord,
     endpoint: str,
+    *,
+    method: str,
     params: Optional[Mapping[str, Any]] = None,
     payload: Any = None,
-    *,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> Any:
     body = None
@@ -234,7 +235,7 @@ def post_json(
     data, _ = _request(
         device,
         endpoint,
-        method="POST",
+        method=method,
         params=params,
         body=body,
         content_type=ct,
@@ -242,7 +243,30 @@ def post_json(
     )
     if not data:
         return {}
-    return _parse_json(data, f"POST {endpoint}")
+    return _parse_json(data, f"{method} {endpoint}")
+
+
+def post_json(
+    device: DeviceRecord,
+    endpoint: str,
+    params: Optional[Mapping[str, Any]] = None,
+    payload: Any = None,
+    *,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> Any:
+    return _send_json(
+        device, endpoint, method="POST", params=params, payload=payload, timeout=timeout
+    )
+
+
+def put_json(
+    device: DeviceRecord,
+    endpoint: str,
+    payload: Any = None,
+    *,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> Any:
+    return _send_json(device, endpoint, method="PUT", payload=payload, timeout=timeout)
 
 
 def post_text(
@@ -277,7 +301,7 @@ def expect_ok(resp: Any, context: str) -> None:
     if not isinstance(resp, dict):
         return
     code = resp.get("code")
-    if code in (None, 0):
+    if code is None or code == 0:
         return
     msg = resp.get("message") or "Unknown error"
     raise RecameraError(f"{context} failed (code={code}): {msg}", code=int(code))

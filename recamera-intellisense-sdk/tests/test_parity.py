@@ -19,8 +19,8 @@ class SchemaDerivationTests(unittest.TestCase):
 
         for name, fn in _cli.COMMANDS.items():
             params = inspect.signature(fn).parameters.values()
-            expected_req = {p.name for p in params if p.default is inspect._empty} - _cli.CLI_EXCLUDE
-            expected_opt = {p.name for p in params if p.default is not inspect._empty} - _cli.CLI_EXCLUDE
+            expected_req = {p.name for p in params if p.default is inspect.Parameter.empty} - _cli.CLI_EXCLUDE
+            expected_opt = {p.name for p in params if p.default is not inspect.Parameter.empty} - _cli.CLI_EXCLUDE
             spec = _cli.COMMAND_SCHEMAS[name]
             self.assertEqual(spec["required"], expected_req, name)
             self.assertEqual(spec["optional"], expected_opt, name)
@@ -38,13 +38,14 @@ class ExportParityTests(unittest.TestCase):
             self.assertTrue(callable(getattr(pkg, name, None)), name)
 
 
-class TokenHygieneTests(unittest.TestCase):
-    STORE = {"cam1": {"host": "192.0.2.1", "token": "sk_secret", "protocol": "http", "allow_unsecured": False}}
+_STORE = {"cam1": {"host": "192.0.2.1", "token": "sk_secret", "protocol": "http", "allow_unsecured": False}}
 
+
+class TokenHygieneTests(unittest.TestCase):
     def _with_store(self):
         tmp = tempfile.TemporaryDirectory()
         root = Path(tmp.name)
-        (root / "devices.json").write_text(json.dumps(self.STORE), encoding="utf-8")
+        (root / "devices.json").write_text(json.dumps(_STORE), encoding="utf-8")
         patches = (
             patch.object(_config, "RECAMERA_DIR", root),
             patch.object(_config, "DEVICE_PROFILES_PATH", root / "devices.json"),

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import json
 import shlex
 import tempfile
 import unittest
@@ -42,7 +41,7 @@ class CliSerializationTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "null\n")
 
     def test_empty_object_result_stays_an_empty_json_object(self) -> None:
-        status, out, _ = _run(["returns_object"], {"returns_object": lambda: {}})
+        status, out, _ = _run(["returns_object"], {"returns_object": dict})
         self.assertEqual(status, 0)
         self.assertEqual(out, "{}\n")
 
@@ -63,22 +62,21 @@ class _Recorder:
         items: Optional[List[Dict[str, str]]] = None,
         payload: Optional[Dict[str, object]] = None,
     ) -> None:
-        self.kwargs = dict(
-            device_name=device_name,
-            count=count,
-            ratio=ratio,
-            enabled=enabled,
-            maybe=maybe,
-            items=items,
-            payload=payload,
-        )
-        return None
+        self.kwargs = {
+            "device_name": device_name,
+            "count": count,
+            "ratio": ratio,
+            "enabled": enabled,
+            "maybe": maybe,
+            "items": items,
+            "payload": payload,
+        }
 
 
 def _recorded(argv):
     rec = _Recorder()
     schemas = {"cmd": {"required": {"device_name"}, "optional": {"count", "ratio", "enabled", "maybe", "items", "payload"}}}
-    status, out, err = _run(["cmd", *argv], {"cmd": rec}, schemas)
+    status, _, err = _run(["cmd", *argv], {"cmd": rec}, schemas)
     return status, rec.kwargs, err
 
 
@@ -201,7 +199,7 @@ class CommandHelpTests(unittest.TestCase):
             for tok in tokens[1:]:
                 if tok.lstrip().startswith("{"):
                     continue
-                body = tok[2:] if tok.startswith("--") else tok
+                body = tok.removeprefix("--")
                 self.assertIn("=", body, f"{name}: example token {tok!r} is not key=value")
 
     def test_examples_validate_against_real_schemas(self) -> None:
@@ -248,7 +246,7 @@ class AtFileEscapeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "v.json"
             path.write_text('[{"k": "v"}]\n', encoding="utf-8")
-            status, out, err = _run(["cmd", "device_name=c", f"items=@{path}"], {"cmd": rec}, schemas)
+            status, _, err = _run(["cmd", "device_name=c", f"items=@{path}"], {"cmd": rec}, schemas)
         self.assertEqual(status, 0, err)
         self.assertEqual(rec.kwargs["items"], [{"k": "v"}])
 

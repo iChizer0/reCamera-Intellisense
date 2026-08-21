@@ -21,6 +21,7 @@ import threading
 from typing import Any, Dict, Optional
 
 from . import _config, _http
+from ._errors import RecameraError
 from .storage import DEFAULT_INTERNAL_DEV_PATH, PATH_CONTROL, get_storage_status
 
 __all__ = [
@@ -131,7 +132,7 @@ def ensure_relay_uuid(
             status = get_relay_status(device_name, dev_path=resolved)
             if status["uuid"] and status["timeout_remain"] > 0:
                 return resolved, cached
-        except Exception:
+        except RecameraError:
             pass
         _cache_evict(device_name, resolved)
     status = open_relay(device_name, dev_path=resolved)

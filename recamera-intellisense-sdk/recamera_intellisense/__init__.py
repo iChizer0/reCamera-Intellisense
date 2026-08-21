@@ -28,6 +28,7 @@ from .files import (
     get_intellisense_events,
 )
 from .gpio import get_gpio_info, get_gpio_value, list_gpios, set_gpio_value
+from .image import get_image_settings, set_image_settings
 from .model import get_detection_model, get_detection_models_info, set_detection_model
 from .records import fetch_record, list_records
 from .relay import close_relay, get_relay_status, open_relay
@@ -49,6 +50,7 @@ from .storage import (
     storage_task_status,
     storage_task_submit,
 )
+from .system import get_device_info, get_resource_info, get_system_time, reboot_device
 
 __version__ = "2.0.7"
 
@@ -107,6 +109,13 @@ __all__ = [
     "delete_file",
     "get_intellisense_events",
     "clear_intellisense_events",
+    # system / image
+    "get_device_info",
+    "get_resource_info",
+    "get_system_time",
+    "reboot_device",
+    "get_image_settings",
+    "set_image_settings",
     # relay helpers (advanced; managed automatically by records)
     "open_relay",
     "get_relay_status",

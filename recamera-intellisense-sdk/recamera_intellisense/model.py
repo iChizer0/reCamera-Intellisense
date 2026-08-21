@@ -27,7 +27,8 @@ PATH_INFERENCE = "/cgi-bin/entry.cgi/model/inference"
 
 
 def _parse_model(index: int, d: Dict[str, Any]) -> Dict[str, Any]:
-    info = d.get("modelInfo") if isinstance(d.get("modelInfo"), dict) else {}
+    raw_info = d.get("modelInfo")
+    info = raw_info if isinstance(raw_info, dict) else {}
     labels_raw = info.get("classes") or []
     labels = [c for c in labels_raw if isinstance(c, str)]
     return {
