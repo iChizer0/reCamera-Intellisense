@@ -802,23 +802,47 @@ def _remove_path_block(rc: Path) -> bool:
     return changed
 
 
+def _export_line() -> str:
+    return f'export PATH="{BIN_DIR}:$PATH"'
+
+
+def _cli_summary_line(launcher: Path) -> str:
+    state = "on PATH" if _bin_on_path() else "not on PATH"
+    return f"  CLI:     {Ui.cyan(str(launcher))}  {Ui.dim(f'({state})')}"
+
+
 def maybe_setup_path(with_path: bool) -> None:
     if _bin_on_path():
         return
     if not with_path and not Ui.ask_yes_no(
         f"Add {BIN_DIR} to PATH in shell rc files?", default=False
     ):
-        Ui.hint(f'To use `rci` directly: export PATH="{BIN_DIR}:$PATH"')
+        sys.stdout.flush()
+        Ui.hint(
+            f"skipped PATH setup; rerun with --with-path for a persistent change, "
+            f"or for this session: {_export_line()}"
+        )
         return
-    changed = [rc for rc in _rc_files() if _add_path_block(rc)]
+    rcs = _rc_files()
+    changed = [rc for rc in rcs if _add_path_block(rc)]
     if changed:
         Ui.info(
             "PATH block added to "
             + ", ".join(p.name for p in changed)
-            + " (restart your shell)."
+            + " (takes effect in new shells)."
+        )
+    elif rcs:
+        Ui.info(
+            "PATH block already present in "
+            + ", ".join(p.name for p in rcs)
+            + " (takes effect in new shells)."
         )
     else:
-        Ui.hint(f'No shell rc files found; add manually: export PATH="{BIN_DIR}:$PATH"')
+        sys.stdout.flush()
+        Ui.hint(f"no shell rc files found; for this session: {_export_line()}")
+        return
+    sys.stdout.flush()  # keep stdout/stderr chronological when piped
+    Ui.hint(f"for this session: {_export_line()}")
 
 
 def _warn_python3() -> None:
@@ -860,7 +884,7 @@ def do_install(args: argparse.Namespace) -> int:
         ):
             Ui.info("Install skipped.")
             if destination.state == "installed":
-                Ui.info(f"CLI launcher: {Ui.cyan(str(install_launcher(destination.paths.skill_dir)))}")
+                print(_cli_summary_line(install_launcher(destination.paths.skill_dir)))
                 maybe_setup_path(args.with_path)
                 print(f"SKILL_PATH={destination.paths.skill_dir}")
             return 0
@@ -872,7 +896,7 @@ def do_install(args: argparse.Namespace) -> int:
     print(f"  Source:  {src.label}")
     print(f"  Target:  {destination.label}")
     print(f"  Status:  {Ui.green('updated' if replaced else 'installed')}")
-    print(f"  CLI:     {Ui.cyan(str(install_launcher(destination.paths.skill_dir)))}")
+    print(_cli_summary_line(install_launcher(destination.paths.skill_dir)))
     maybe_setup_path(args.with_path)
     if anchor_missing or skills_missing:
         print()
