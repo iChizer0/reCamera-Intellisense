@@ -619,6 +619,9 @@ pub struct StorageTaskSubmitParams {
     /// paths relative to the data directory.
     #[serde(default)]
     pub files: Vec<String>,
+    /// All storage actions are destructive; must be true to execute.
+    #[serde(default)]
+    pub confirm: bool,
     /// Run synchronously (default: false = ASYNC_SUBMIT).
     #[serde(default)]
     pub sync: bool,
@@ -672,6 +675,19 @@ pub struct DeleteFileParams {
     pub device_name: String,
     /// Absolute remote path under the daemon-allowed prefix.
     pub path: String,
+    /// Deletion is destructive; must be true to execute.
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RebootDeviceParams {
+    /// Name of the registered device (also accepted as `name`).
+    #[serde(alias = "name")]
+    pub device_name: String,
+    /// Reboot is disruptive; must be true to execute.
+    #[serde(default)]
+    pub confirm: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

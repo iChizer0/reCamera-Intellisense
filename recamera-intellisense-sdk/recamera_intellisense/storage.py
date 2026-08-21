@@ -11,11 +11,12 @@ if __name__ == "__main__" and __package__ is None:
 
     raise SystemExit(main())
 
+import sys
 import time
 from typing import Any, Dict, List, Optional
 
 from . import _config, _http
-from ._coerce import to_bool
+from ._coerce import require_confirm, to_bool
 
 __all__ = [
     "get_storage_status",
@@ -171,13 +172,17 @@ def storage_task_submit(
     dev_path: str,
     sync: bool = False,
     files: Optional[List[str]] = None,
+    confirm: bool = False,
 ) -> Dict[str, Any]:
     """Submit a storage action. `sync=True` blocks until completion.
 
+    All actions are destructive (FORMAT, FREE_UP, EJECT,
+    REMOVE_FILES_OR_DIRECTORIES) and require `confirm=True`.
     `FORMAT` and `FREE_UP` can take a long time and are rejected with
     `sync=True` (submit async and poll :func:`storage_task_status` instead).
     """
     action_canonical = normalize_action(action)
+    require_confirm(confirm, f"storage task {action_canonical}")
     sync = to_bool(sync, "sync")
     if sync and action_canonical in ("FORMAT", "FREE_UP"):
         raise ValueError(
@@ -235,6 +240,11 @@ def ensure_storage(device_name: Optional[str] = None, *, timeout_s: float = 3.0)
                 "call set_storage_slot to pick one."
             )
         set_storage_slot(device_name, by_dev_path=default["dev_path"])
+        print(
+            f"note: auto-enabled internal storage slot {default['dev_path']} "
+            "with quota rotation",
+            file=sys.stderr,
+        )
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             current = get_storage_status(device_name)
@@ -262,6 +272,10 @@ def ensure_storage(device_name: Optional[str] = None, *, timeout_s: float = 3.0)
                 dev_path=s["dev_path"],
                 quota_limit_bytes=s["quota_limit_bytes"],
                 quota_rotate=True,
+            )
+            print(
+                f"note: enabled quota rotation on {s['dev_path']}",
+                file=sys.stderr,
             )
 
 

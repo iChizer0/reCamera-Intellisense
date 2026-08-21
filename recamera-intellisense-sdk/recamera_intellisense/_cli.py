@@ -129,7 +129,7 @@ EXAMPLES: Dict[str, str] = {
     "get_device_info": "recamera get_device_info device_name=cam1",
     "get_resource_info": "recamera get_resource_info device_name=cam1",
     "get_system_time": "recamera get_system_time device_name=cam1",
-    "reboot_device": "recamera reboot_device device_name=cam1",
+    "reboot_device": "recamera reboot_device device_name=cam1 confirm=true",
     "get_image_settings": "recamera get_image_settings device_name=cam1",
     "set_image_settings": (
         "recamera set_image_settings device_name=cam1 "
@@ -157,7 +157,7 @@ EXAMPLES: Dict[str, str] = {
     ),
     "storage_task_submit": (
         "recamera storage_task_submit device_name=cam1 "
-        "action=FREE_UP dev_path=/dev/mmcblk0p8"
+        "action=FREE_UP dev_path=/dev/mmcblk0p8 confirm=true"
     ),
     "storage_task_status": (
         "recamera storage_task_status device_name=cam1 "
@@ -202,7 +202,7 @@ EXAMPLES: Dict[str, str] = {
     ),
     "delete_file": (
         "recamera delete_file device_name=cam1 "
-        "path=/mnt/rc_mmcblk0p8/reCamera/snapshot.jpg"
+        "path=/mnt/rc_mmcblk0p8/reCamera/snapshot.jpg confirm=true"
     ),
     "get_intellisense_events": (
         "recamera get_intellisense_events "

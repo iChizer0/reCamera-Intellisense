@@ -11,6 +11,7 @@ metadata: {
   }
 }
 user-invocable: true
+allowed-tools: "Bash"
 ---
 
 # reCamera Intellisense
@@ -24,8 +25,10 @@ Drive one or more [reCamera Pro](https://wiki.seeedstudio.com/recamera_pro_getti
 
 ## Security
 
+- **Capabilities**: network access to configured device IPs, credential persistence in `~/.recamera/devices.json`, filesystem writes (captures/downloads), GPIO control, and device administration (reboot, storage format, ISP changes). Host-level tool use is `Bash` only (invoking the bundled CLI).
 - **Tokens are bearer credentials** — never commit or log them. Device-facing outputs (`list_devices` etc.) never include them.
-- **Same-origin redirects only** (SSRF-safe); **TLS verified by default** — local HTTPS devices use self-signed certs, so register `protocol=https allow_unsecured=true` (LAN only, never the public Internet).
+- **Confirmation gates**: `storage_task_submit` (FORMAT/FREE_UP/EJECT/REMOVE), `delete_file`, and `reboot_device` refuse unless `confirm=true` — always ask the user first. `ensure_storage` prints a stderr note whenever it changes slot/rotation state.
+- **Same-origin redirects only** (SSRF-safe); **TLS verified by default** — local HTTPS devices use self-signed certs, so register `protocol=https allow_unsecured=true` (trusted LAN only, never the public Internet); a one-time stderr warning is printed whenever an unverified connection is used.
 - `fetch_file`/`delete_file` reject relative paths, `..`, and NUL bytes; the daemon enforces an allowlist.
 - This skill writes files, drives GPIO, and can format storage — point it only at hardware you own.
 

@@ -14,6 +14,7 @@ if __name__ == "__main__" and __package__ is None:
 from typing import Any, Dict, Optional
 
 from . import _config, _http
+from ._coerce import require_confirm
 
 __all__ = ["get_device_info", "get_resource_info", "get_system_time", "reboot_device"]
 
@@ -67,8 +68,12 @@ def get_system_time(device_name: Optional[str] = None) -> Dict[str, Any]:
     }
 
 
-def reboot_device(device_name: Optional[str] = None) -> None:
-    """Reboot the device. Disruptive: all streams, captures, and sessions drop."""
+def reboot_device(device_name: Optional[str] = None, *, confirm: bool = False) -> None:
+    """Reboot the device. Disruptive: all streams, captures, and sessions drop.
+
+    Requires `confirm=True`.
+    """
+    require_confirm(confirm, "reboot device")
     dev = _config.resolve(device_name)
     resp = _http.post_json(dev, PATH_REBOOT)
     _http.expect_ok(resp, "reboot device")

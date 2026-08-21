@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from . import _config, _http
 from ._const import IMAGE_EXTENSIONS, MAX_INLINE_BYTES
+from ._coerce import require_confirm
 from ._errors import RecameraError
 
 __all__ = [
@@ -84,9 +85,10 @@ def fetch_file(
     }
 
 
-def delete_file(device_name: Optional[str] = None, *, path: str) -> None:
-    """Delete an on-device file via the daemon."""
+def delete_file(device_name: Optional[str] = None, *, path: str, confirm: bool = False) -> None:
+    """Delete an on-device file via the daemon. Destructive: requires `confirm=True`."""
     path = _validate_absolute_path(path)
+    require_confirm(confirm, f"delete file {path!r}")
     dev = _config.resolve(device_name)
     _http.delete(dev, PATH_FILE, params={"path": path})
 

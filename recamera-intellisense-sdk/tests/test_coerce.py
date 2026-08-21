@@ -71,7 +71,7 @@ class BoolBoundaryTests(unittest.TestCase):
         from recamera_intellisense import storage
 
         with self.assertRaises(ValueError):
-            storage.storage_task_submit("cam1", action="EJECT", dev_path="/dev/x", sync="maybe")
+            storage.storage_task_submit("cam1", action="EJECT", dev_path="/dev/x", sync="maybe", confirm=True)
 
 
 if __name__ == "__main__":  # pragma: no cover

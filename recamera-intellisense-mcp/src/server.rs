@@ -382,7 +382,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Reboot the device. Disruptive: all streams, captures, and sessions drop.",
+        description = "Reboot the device. Disruptive: all streams, captures, and sessions drop. Requires confirm=true.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -392,8 +392,9 @@ impl ReCameraServer {
     )]
     async fn reboot_device(
         &self,
-        Parameters(params): Parameters<DeviceNameParams>,
+        Parameters(params): Parameters<RebootDeviceParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        try_tool!(crate::api::require_confirm(params.confirm, "reboot device"));
         let device = try_tool!(self.resolve(&params.device_name).await);
         try_tool!(api_system::reboot_device(&self.client, &device).await);
         Ok(text_result("Reboot command accepted."))
@@ -810,7 +811,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Submit a storage maintenance task: FORMAT | FREE_UP | EJECT | REMOVE_FILES_OR_DIRECTORIES. Defaults to async; set sync=true only for EJECT or REMOVE_FILES_OR_DIRECTORIES. REMOVE requires non-empty 'files'.",
+        description = "Submit a storage maintenance task: FORMAT | FREE_UP | EJECT | REMOVE_FILES_OR_DIRECTORIES. Defaults to async; set sync=true only for EJECT or REMOVE_FILES_OR_DIRECTORIES. REMOVE requires non-empty 'files'. All actions are destructive: requires confirm=true.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -823,6 +824,10 @@ impl ReCameraServer {
         Parameters(params): Parameters<StorageTaskSubmitParams>,
     ) -> Result<CallToolResult, ErrorData> {
         try_tool!(validate_not_empty(&params.dev_path, "dev_path"));
+        try_tool!(crate::api::require_confirm(
+            params.confirm,
+            &format!("storage task {}", params.action.as_str())
+        ));
         if matches!(params.action, StorageAction::RemoveFilesOrDirectories)
             && params.files.is_empty()
         {
@@ -1010,7 +1015,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Delete a file via the daemon (/api/v1/file). Path must be absolute.",
+        description = "Delete a file via the daemon (/api/v1/file). Path must be absolute. Destructive: requires confirm=true.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -1023,6 +1028,10 @@ impl ReCameraServer {
         Parameters(params): Parameters<DeleteFileParams>,
     ) -> Result<CallToolResult, ErrorData> {
         try_tool!(validate_not_empty(&params.path, "path"));
+        try_tool!(crate::api::require_confirm(
+            params.confirm,
+            &format!("delete file {:?}", params.path)
+        ));
         let device = try_tool!(self.resolve(&params.device_name).await);
         try_tool!(api_daemon::delete_file(&self.client, &device, &params.path).await);
         Ok(text_result("File deleted."))

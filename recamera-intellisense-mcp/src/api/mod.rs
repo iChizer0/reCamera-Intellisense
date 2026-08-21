@@ -27,3 +27,24 @@ pub(crate) fn expect_ok(resp: &Value, context: &str) -> Result<()> {
         .unwrap_or("Unknown error");
     bail!("{context} failed (code={code}): {msg}");
 }
+
+/// Gate destructive operations: refuse unless explicitly confirmed.
+pub fn require_confirm(confirm: bool, what: &str) -> Result<()> {
+    if !confirm {
+        bail!(
+            "{what} is destructive and was NOT executed. \
+             Re-run with confirm=true only after explicit user approval."
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn confirm_gate_blocks_until_confirmed() {
+        let err = super::require_confirm(false, "reboot device").unwrap_err();
+        assert!(err.to_string().contains("confirm=true"));
+        assert!(super::require_confirm(true, "reboot device").is_ok());
+    }
+}

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._errors import RecameraError
+
 _TRUE = {"true", "1", "yes", "on"}
 _FALSE = {"false", "0", "no", "off"}
 
@@ -27,3 +29,12 @@ def to_bool(value: Any, name: str = "value") -> bool:
     raise ValueError(
         f"{name} must be a boolean (true/false); got {value!r}."
     )
+
+
+def require_confirm(confirm: Any, what: str) -> None:
+    """Gate destructive operations: refuse unless explicitly confirmed."""
+    if not to_bool(confirm, "confirm"):
+        raise RecameraError(
+            f"{what} is destructive and was NOT executed. "
+            "Re-run with confirm=true only after explicit user approval."
+        )

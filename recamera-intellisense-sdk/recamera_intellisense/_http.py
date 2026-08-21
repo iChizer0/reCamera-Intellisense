@@ -6,6 +6,7 @@ import http.client
 import json
 import socket
 import ssl
+import sys
 import urllib.parse
 from typing import Any, Mapping, Optional, Tuple
 
@@ -17,6 +18,20 @@ DEFAULT_TIMEOUT = 10.0
 _INSECURE_SSL = ssl.create_default_context()
 _INSECURE_SSL.check_hostname = False
 _INSECURE_SSL.verify_mode = ssl.CERT_NONE
+_WARNED_INSECURE = False
+
+
+def insecure_ssl_context(host: str) -> ssl.SSLContext:
+    """Unverified context for LAN self-signed devices; warns once per process."""
+    global _WARNED_INSECURE  # pylint: disable=global-statement
+    if not _WARNED_INSECURE:
+        _WARNED_INSECURE = True
+        print(
+            f"warning: TLS verification disabled for {host} (allow_unsecured); "
+            "use only on a trusted LAN — traffic and tokens are interceptable",
+            file=sys.stderr,
+        )
+    return _INSECURE_SSL
 
 
 def base_url(device: DeviceRecord) -> str:
@@ -54,7 +69,7 @@ def _auth_headers(device: DeviceRecord) -> dict[str, str]:
 
 def _ssl_context(device: DeviceRecord):
     if device.get("protocol") == "https" and device.get("allow_unsecured", False):
-        return _INSECURE_SSL
+        return insecure_ssl_context(device.get("host", ""))
     return None
 
 
@@ -133,17 +148,16 @@ def _request(
     cur_method = method
     cur_body = body
     ctx = _ssl_context(device)
-    insecure_ctx_fallback = None
-    if ctx is None and device.get("allow_unsecured", False):
-        insecure_ctx_fallback = _INSECURE_SSL
+    # Resolved (and warned about) only if a redirect actually hops to https.
+    allow_insecure_fallback = ctx is None and bool(device.get("allow_unsecured", False))
     origin = _device_origin(device)
 
     max_hops = 5
     for hop in range(max_hops + 1):
         scheme, host, port, path = _split(url)
         use_ctx = ctx if scheme == "https" else None
-        if scheme == "https" and use_ctx is None and insecure_ctx_fallback is not None:
-            use_ctx = insecure_ctx_fallback
+        if scheme == "https" and use_ctx is None and allow_insecure_fallback:
+            use_ctx = insecure_ssl_context(device.get("host", ""))
         conn = _connect(scheme, host, port, timeout, use_ctx)
         try:
             send_headers = dict(headers)

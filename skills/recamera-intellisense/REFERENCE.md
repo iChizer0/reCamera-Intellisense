@@ -119,7 +119,7 @@ Examples:
 | `get_storage_status` | `device_name` | — |
 | `set_storage_slot` | `device_name` | `by_dev_path`, `by_uuid` |
 | `configure_storage_quota` | `device_name`, `dev_path`, `quota_limit_bytes` | `quota_rotate` |
-| `storage_task_submit` | `device_name`, `action`, `dev_path` | `sync`, `files` |
+| `storage_task_submit` | `device_name`, `action`, `dev_path`, `confirm` | `sync`, `files` |
 | `storage_task_status` | `device_name`, `action`, `dev_path` | `task_uid` |
 | `storage_task_cancel` | `device_name`, `action`, `dev_path` | `task_uid` |
 
@@ -132,7 +132,7 @@ Actions are `FORMAT`, `FREE_UP`, `EJECT`, and `REMOVE_FILES_OR_DIRECTORIES`. `FO
 | `list_records` | `device_name` | `path`, `dev_path`, `limit`, `offset` |
 | `fetch_record` | `device_name`, `path` | `dev_path`, `max_inline_bytes` |
 | `fetch_file` | `device_name`, `path` | `max_inline_bytes` |
-| `delete_file` | `device_name`, `path` | — |
+| `delete_file` | `device_name`, `path`, `confirm` | — |
 | `get_intellisense_events` | `device_name` | `start_unix_ms`, `end_unix_ms` |
 | `clear_intellisense_events` | `device_name` | — |
 
@@ -200,9 +200,9 @@ Actions are `FORMAT`, `FREE_UP`, `EJECT`, and `REMOVE_FILES_OR_DIRECTORIES`. `FO
 | `get_device_info` | `device_name` | — |
 | `get_resource_info` | `device_name` | — |
 | `get_system_time` | `device_name` | — |
-| `reboot_device` | `device_name` | — |
+| `reboot_device` | `device_name`, `confirm` | — |
 
-`get_device_info` → `{serial_number, firmware_version, sensor_model, base_plate_model}`. `get_resource_info` → `{cpu_usage, npu_usage, memory: {total_gb, used_gb, usage_percent}, storage: {...}}`. `reboot_device` is disruptive: all streams, captures, and sessions drop.
+`get_device_info` → `{serial_number, firmware_version, sensor_model, base_plate_model}`. `get_resource_info` → `{cpu_usage, npu_usage, memory: {total_gb, used_gb, usage_percent}, storage: {...}}`. `reboot_device` is disruptive: all streams, captures, and sessions drop. Destructive commands (`storage_task_submit`, `delete_file`, `reboot_device`) require `confirm=true` and otherwise refuse without touching the device.
 
 ## Image (ISP)
 

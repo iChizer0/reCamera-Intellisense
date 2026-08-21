@@ -85,11 +85,11 @@ class SystemTests(unittest.TestCase):
 
     def test_reboot_posts_and_checks_envelope(self) -> None:
         with _resolve(system), patch.object(system._http, "post_json", return_value={"code": 0}) as post:
-            self.assertIsNone(system.reboot_device("cam1"))
+            self.assertIsNone(system.reboot_device("cam1", confirm=True))
         self.assertEqual(post.call_args.args[1], system.PATH_REBOOT)
         with _resolve(system), patch.object(system._http, "post_json", return_value={"code": 500, "message": "x"}):
             with self.assertRaises(RecameraError):
-                system.reboot_device("cam1")
+                system.reboot_device("cam1", confirm=True)
 
 
 class GetImageSettingsTests(unittest.TestCase):

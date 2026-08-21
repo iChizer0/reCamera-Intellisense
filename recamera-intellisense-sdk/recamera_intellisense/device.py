@@ -15,7 +15,7 @@ import http.client
 import socket
 from typing import Any, Dict, List, Optional, cast
 
-from . import _config
+from . import _config, _http
 from ._coerce import to_bool
 from ._config import DeviceRecord
 from ._errors import RecameraError
@@ -64,12 +64,12 @@ def _probe(
         except OSError:
             host_header = connect_host
         if use_tls:
-            import ssl
-
-            ctx = ssl.create_default_context()
             if allow_unsecured:
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
+                ctx = _http.insecure_ssl_context(host)
+            else:
+                import ssl
+
+                ctx = ssl.create_default_context()
             conn: http.client.HTTPConnection = http.client.HTTPSConnection(
                 connect_host, port, timeout=timeout, context=ctx
             )
