@@ -596,7 +596,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Clear all cached detection events on a reCamera device.",
+        description = "Clear all cached detection events on a reCamera device. Irreversible but ungated by design: the buffer is transient telemetry that refills itself.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -952,7 +952,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Fetch a record file via the relay. path is relative to the data directory. Videos or files > 5 MB return the direct relay URL. Note: internally refreshes the relay TTL.",
+        description = "Fetch a record file via the relay. path is relative to the data directory. Videos or files > 5 MB return the direct relay URL (no credentials needed, but it embeds an unguessable random UUID and dies with the relay TTL, device default 300s; avoid sharing). Note: internally refreshes the relay TTL.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,

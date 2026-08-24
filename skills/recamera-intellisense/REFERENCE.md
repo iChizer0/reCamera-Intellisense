@@ -136,7 +136,7 @@ Actions are `FORMAT`, `FREE_UP`, `EJECT`, and `REMOVE_FILES_OR_DIRECTORIES`. `FO
 | `get_intellisense_events` | `device_name` | `start_unix_ms`, `end_unix_ms` |
 | `clear_intellisense_events` | `device_name` | — |
 
-`list_records` paths are relative to the selected record data directory. `fetch_file` paths are absolute on-device paths and reject traversal segments and NUL bytes. Images and payloads within the inline limit are returned as base64; larger payloads return metadata and a retrieval note.
+`list_records` paths are relative to the selected record data directory. `fetch_file` paths are absolute on-device paths and reject traversal segments and NUL bytes. Images and payloads within the inline limit are returned as base64; larger payloads return metadata and a relay `url`. Relay URLs need no credentials but embed a random UUID (unguessable, capability-style) and die with the relay TTL (device default 300s); still avoid sharing them publicly.
 
 ## GPIO
 

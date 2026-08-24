@@ -120,10 +120,11 @@ def get_intellisense_events(
 
 
 def clear_intellisense_events(device_name: Optional[str] = None) -> None:
-    """Clear all buffered intellisense events on the daemon.
+    """Clear all buffered intellisense events on the daemon (irreversible).
 
     Calls `POST /api/v1/intellisense/events/clear` (the daemon does not
-    support `DELETE` on the events collection).
+    support `DELETE` on the events collection). Ungated by design: the buffer
+    is transient telemetry that refills itself.
     """
     dev = _config.resolve(device_name)
     resp = _http.post_json(dev, PATH_EVENTS_CLEAR)

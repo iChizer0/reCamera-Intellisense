@@ -136,6 +136,10 @@ def fetch_record(
     Returns one of:
       * `{path, content_type, content_base64, size, url}` — images or payloads ≤ 5 MiB.
       * `{path, url, size, content_type, note}` — payload too large to inline.
+
+    The returned relay `url` needs no credentials, but it embeds a random UUID
+    (unguessable, capability-style) and dies with the relay TTL (device default
+    300s); still avoid sharing it.
     """
     dev = _config.resolve(device_name)
     _, uuid = _relay.ensure_relay_uuid(device_name, dev_path)
@@ -157,8 +161,9 @@ def fetch_record(
         "url": url,
         "size": len(body),
         "content_type": ct,
-        "note": "payload exceeds inline budget; fetch the URL directly "
-        "(relay token is bearer-free).",
+        "note": "payload exceeds inline budget; fetch the URL directly — the "
+        "relay URL needs no credentials but embeds a random UUID (unguessable) "
+        "and dies with the relay TTL (default 300s); still avoid sharing it.",
     }
 
 
