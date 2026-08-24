@@ -20,4 +20,4 @@ For detailed API signatures and CLI schemas, see [API Reference](skills/recamera
 curl -fsSL https://raw.githubusercontent.com/iChizer0/reCamera-Intellisense/main/scripts/setup-skill.py | python3
 ```
 
-The installer will prompt you to choose an installation directory (current workspace, detected Claude / Claw roots, detected Nanobot workspaces, or a custom path such as `~/.nanobot`). It also writes an `rci` launcher to `~/.recamera/bin` for direct shell use of the SDK CLI (`rci <command> key=value ...`); adding that directory to your `PATH` is opt-in (prompt or `--with-path`), and `uninstall` removes both the launcher and any PATH block it added.
+The installer will prompt you to choose an installation directory (current workspace, detected Claude / Claw roots, detected Nanobot workspaces, or a custom path such as `~/.nanobot`). It also writes an `rci` launcher to `~/.recamera/bin` for direct shell use of the SDK CLI (`rci <command> key=value ...`) and adds that directory to your `PATH` by default (opt out with `--no-path`); `uninstall` removes both the launcher and any PATH block it added.

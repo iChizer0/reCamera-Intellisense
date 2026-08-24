@@ -7,7 +7,7 @@ Features:
 - standalone installs from GitHub release source archives
 - safe staged replacement with rollback on failure
 - destination discovery for workspace, Claude Code, Claw-style, and Nanobot roots
-- `rci` CLI launcher at ~/.recamera/bin, with opt-in PATH wiring
+- `rci` CLI launcher at ~/.recamera/bin, with default-on PATH wiring (--no-path opts out)
 
 Examples:
     python3 setup-skill.py
@@ -819,17 +819,16 @@ def _cli_summary_value(launcher: Path) -> str:
     return f"{Ui.cyan(str(launcher))}  {Ui.dim(f'({state})')}"
 
 
-def maybe_setup_path(with_path: bool) -> None:
+def maybe_setup_path(no_path: bool) -> None:
     if _bin_on_path():
         return
-    if not with_path and not Ui.ask_yes_no(
-        f"Add {BIN_DIR} to PATH in shell rc files?", default=False
-    ):
+    if no_path:
         sys.stdout.flush()
-        Ui.hint(
-            f"skipped PATH setup; rerun with --with-path for a persistent change, "
-            f"or for this session: {_export_line()}"
-        )
+        Ui.hint(f"PATH setup skipped (--no-path); for this session: {_export_line()}")
+        return
+    if not Ui.ask_yes_no(f"Add {BIN_DIR} to PATH in shell rc files?", default=True):
+        sys.stdout.flush()
+        Ui.hint(f"PATH setup skipped; for this session: {_export_line()}")
         return
     rcs = _rc_files()
     changed = [rc for rc in rcs if _add_path_block(rc)]
@@ -893,7 +892,7 @@ def do_install(args: argparse.Namespace) -> int:
             Ui.info("Install skipped.")
             if destination.state == "installed":
                 Ui.kv([("CLI", _cli_summary_value(install_launcher(destination.paths.skill_dir)))])
-                maybe_setup_path(args.with_path)
+                maybe_setup_path(args.no_path and not args.with_path)
                 print(f"SKILL_PATH={destination.paths.skill_dir}")
             return 0
     with source_bundle(args.version, args.force_download) as src:
@@ -909,7 +908,7 @@ def do_install(args: argparse.Namespace) -> int:
             ("CLI", _cli_summary_value(install_launcher(destination.paths.skill_dir))),
         ]
     )
-    maybe_setup_path(args.with_path)
+    maybe_setup_path(args.no_path and not args.with_path)
     if anchor_missing or skills_missing:
         print()
         Ui.warn(
@@ -1015,8 +1014,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  setup-skill.py uninstall -y\n"
             "  setup-skill.py list-destinations\n"
             "\n"
-            "Install also writes an `rci` launcher to ~/.recamera/bin; use\n"
-            "--with-path (or answer the prompt) to put that directory on PATH.\n"
+            "Install also writes an `rci` launcher to ~/.recamera/bin and adds it\n"
+            "to PATH by default (opt out with --no-path).\n"
             "Uninstall removes both the launcher and any PATH block it added.\n"
         ),
     )
@@ -1064,7 +1063,12 @@ def build_parser() -> argparse.ArgumentParser:
     install_p.add_argument(
         "--with-path",
         action="store_true",
-        help="Also add ~/.recamera/bin to PATH in ~/.bashrc / ~/.zshrc so `rci` is directly invokable.",
+        help=argparse.SUPPRESS,  # legacy alias; PATH setup is the default
+    )
+    install_p.add_argument(
+        "--no-path",
+        action="store_true",
+        help="Skip adding ~/.recamera/bin to PATH in ~/.bashrc / ~/.zshrc (on by default).",
     )
     add_yes(install_p)
     install_p.set_defaults(func=do_install)

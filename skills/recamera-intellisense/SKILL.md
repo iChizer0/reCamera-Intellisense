@@ -41,7 +41,9 @@ export PYTHONPATH="{baseDir}/scripts"
 alias rci='python3 -m recamera_intellisense'
 
 # (or use the standalone launcher from scripts/setup-skill.py — it writes
-#  ~/.recamera/bin/rci and can optionally add that directory to PATH)
+#  ~/.recamera/bin/rci and adds it to PATH by default. If `rci` is not found —
+#  shell not restarted yet, or PATH setup skipped with --no-path — fall back to
+#  the direct form above; the skill's bundled scripts always work)
 
 rci <command> key=value ...            # flat (preferred)
 rci <command> --key value              # flags; dashes normalize to underscores
