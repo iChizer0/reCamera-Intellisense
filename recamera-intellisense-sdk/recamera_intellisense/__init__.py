@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from ._errors import RecameraError
-from .acoustic import get_active_acoustic_model
+from .acoustic import get_active_acoustic_model, list_acoustic_models
+from .apps import get_app_logs, list_apps
+from .backup import export_device_config
 from .capture import capture_image, get_capture_status, start_capture, stop_capture
+from .notify import get_notify_config
+from .video import get_video_encode
 from .detection import (
     clear_detection_events,
     get_detection_events,
@@ -51,7 +55,13 @@ from .storage import (
     storage_task_status,
     storage_task_submit,
 )
-from .system import get_device_info, get_resource_info, get_system_time, reboot_device
+from .system import (
+    get_battery_status,
+    get_device_info,
+    get_resource_info,
+    get_system_time,
+    reboot_device,
+)
 
 __version__ = "2.1.2"
 
@@ -96,6 +106,13 @@ __all__ = [
     "get_gpio_value",
     # acoustic
     "get_active_acoustic_model",
+    "list_acoustic_models",
+    # app center / video / notify / backup
+    "list_apps",
+    "get_app_logs",
+    "get_video_encode",
+    "get_notify_config",
+    "export_device_config",
     # model / detection
     "get_detection_models_info",
     "get_detection_model",
@@ -115,6 +132,7 @@ __all__ = [
     "get_device_info",
     "get_resource_info",
     "get_system_time",
+    "get_battery_status",
     "reboot_device",
     "get_image_settings",
     "set_image_settings",

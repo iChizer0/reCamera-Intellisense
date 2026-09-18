@@ -63,6 +63,7 @@ PYTHONPATH="./scripts" python3 -m recamera_intellisense
 | `get_detection_events` | `device_name` | `start_unix_ms`, `end_unix_ms` |
 | `clear_detection_events` | `device_name` | — |
 | `get_active_acoustic_model` | `device_name` | — |
+| `list_acoustic_models` | `device_name` | — |
 
 Detection labels are names returned by the selected model, not numeric indexes. A schedule is a list such as:
 
@@ -99,6 +100,31 @@ Examples:
 ```json
 {"kind":"gpio","num":106,"state":"PULL_UP","signal":"FALLING","debounce_ms":50}
 ```
+
+## App Center
+
+| Command | Required keys | Optional keys |
+|---|---|---|
+| `list_apps` | `device_name` | — |
+| `get_app_logs` | `device_name`, `app_id` | `tail` |
+
+`list_apps` returns installed apps plus firmware system apps (`builtin`, `acousticslab`) with `status`, `version`, and `system` flag. A stopped app produces no frames for recording rules (see `get_record_sources`). `get_app_logs` tails the app's log (clamped to [1, 2000], spans rotation). App lifecycle (start/stop/restart) is not exposed by these commands; manage it from the App Center web UI. Building new apps: use the [recamera-pysdk](https://github.com/Seeed-Studio/recamera-pro-ext-api/tree/main/skill/recamera-pysdk) skill.
+
+## Video encode
+
+| Command | Required keys | Optional keys |
+|---|---|---|
+| `get_video_encode` | `device_name` | `stream` |
+
+`stream` is `main` (default) or `sub`. Returns `{stream, stream_type, enabled, codec, resolution, frame_rate, gop, rc_mode, rc_quality, max_rate}` (max_rate in kbps).
+
+## Result push (notify)
+
+| Command | Required keys | Optional keys |
+|---|---|---|
+| `get_notify_config` | `device_name` | — |
+
+Returns `{mode, mode_name, mqtt, http, uart, templates}` — the shared pipeline that fans results (built-in vision AND AcousticsLab classifications) out to MQTT / HTTP / UART. `mode`: 0=off, 1=MQTT, 2=HTTP, 3=UART. **`password`/`token` are redacted as `"***"`** — the device returns them in cleartext and they must not enter agent contexts. `templates` are the shared per-task payload templates; empty = built-in default.
 
 ## Capture
 
@@ -200,10 +226,12 @@ Actions are `FORMAT`, `FREE_UP`, `EJECT`, and `REMOVE_FILES_OR_DIRECTORIES`. `FO
 |---|---|---|
 | `get_device_info` | `device_name` | — |
 | `get_resource_info` | `device_name` | — |
+| `get_battery_status` | `device_name` | — |
 | `get_system_time` | `device_name` | — |
+| `export_device_config` | `device_name`, `output` | — |
 | `reboot_device` | `device_name`, `confirm` | — |
 
-`get_device_info` → `{serial_number, firmware_version, sensor_model, base_plate_model}`. `get_resource_info` → `{cpu_usage, npu_usage, memory: {total_gb, used_gb, usage_percent}, storage: {...}}`. `reboot_device` is disruptive: all streams, captures, and sessions drop. Destructive commands (`storage_task_submit`, `delete_file`, `reboot_device`) require `confirm=true` and otherwise refuse without touching the device.
+`get_device_info` → `{serial_number, firmware_version, sensor_model, base_plate_model}`. `get_battery_status` → `{attached, charging, display_steps, total_steps}` (`attached=false` on battery-less base plates). `export_device_config` downloads the full device config tarball to the LOCAL `output` path (read-only for the device; refuses to overwrite an existing file) — snapshot before making changes. `get_resource_info` → `{cpu_usage, npu_usage, memory: {total_gb, used_gb, usage_percent}, storage: {...}}`. `reboot_device` is disruptive: all streams, captures, and sessions drop. Destructive commands (`storage_task_submit`, `delete_file`, `reboot_device`) require `confirm=true` and otherwise refuse without touching the device.
 
 ## Image (ISP)
 
@@ -240,4 +268,4 @@ from recamera_intellisense import capture_image, get_storage_status
 image = capture_image(device_name="cam1")
 ```
 
-The public SDK exports the 51 CLI commands listed above (each function's signature is its schema — the CLI derives required/optional arguments and types from it). `relay.py` also has internal helpers used by record browsing; relay lifecycle is managed automatically by `list_records` and `fetch_record`.
+The public SDK exports the 58 CLI commands listed above (each function's signature is its schema — the CLI derives required/optional arguments and types from it). `relay.py` also has internal helpers used by record browsing; relay lifecycle is managed automatically by `list_records` and `fetch_record`.

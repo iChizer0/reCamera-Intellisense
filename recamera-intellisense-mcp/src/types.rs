@@ -201,8 +201,7 @@ pub struct DetectionRule {
     #[serde(default)]
     pub label_filter: Vec<String>,
     /// Source ids to match, e.g. ["builtin"] (vision) or ["acousticslab"]
-    /// (sound). Empty = match EVERY source. Discover ids and their producible
-    /// labels via `get_record_sources`.
+    /// (sound); empty = every source. See `get_record_sources`.
     #[serde(default)]
     pub source_filter: Vec<String>,
     /// List of polygons of normalized [x, y] in [0,1]; omit or empty for full frame.
@@ -322,9 +321,8 @@ pub struct RecordSource {
     pub frame_capable: bool,
     pub event_capable: bool,
     pub supports_roi: bool,
-    /// Labels this source can currently produce. Empty = unknowable (the
-    /// builtin vision source follows the selected model; see
-    /// `get_detection_models_info`).
+    /// Labels this source can currently produce; empty = unknowable (the
+    /// builtin vision source follows the selected model).
     pub classes: Vec<String>,
 }
 
@@ -547,6 +545,124 @@ pub struct SetImageSettingsParams {
     pub scene_id: Option<i64>,
 }
 
+/// Result-push (notify) configuration; secrets are redacted on read.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NotifyConfig {
+    /// 0=off, 1=MQTT, 2=HTTP, 3=UART.
+    pub mode: i32,
+    pub mode_name: String,
+    pub mqtt: NotifyMqtt,
+    pub http: NotifyHttp,
+    pub uart: NotifyUart,
+    pub templates: NotifyTemplates,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NotifyMqtt {
+    pub url: String,
+    pub port: i32,
+    pub client_id: String,
+    pub username: String,
+    /// Masked as "***" when set; the device API returns it in cleartext.
+    pub password: String,
+    pub topic: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NotifyHttp {
+    pub url: String,
+    /// Masked as "***" when set.
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NotifyUart {
+    pub port: String,
+    pub port_dev: String,
+}
+
+/// Payload templates shared by every result source; empty = built-in default.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NotifyTemplates {
+    pub classification: String,
+    pub detection: String,
+    pub keypoint: String,
+    pub segmentation: String,
+    pub tracking: String,
+}
+
+/// An App Center application (installed app or firmware system app).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AppEntry {
+    pub id: String,
+    pub name: String,
+    pub name_zh: Option<String>,
+    pub version: Option<String>,
+    /// e.g. "running" / "stopped".
+    pub status: String,
+    /// Firmware-provided app (cannot be uninstalled).
+    pub system: bool,
+    pub installed: bool,
+    pub description: String,
+}
+
+/// Recent app log lines (spans the rotated log file).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AppLogs {
+    pub id: String,
+    pub lines: Vec<String>,
+}
+
+/// Encode parameters of one video stream.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct VideoEncode {
+    /// "main" | "sub".
+    pub stream: String,
+    pub stream_type: String,
+    pub enabled: bool,
+    /// e.g. "H.264" / "H.265".
+    pub codec: String,
+    /// e.g. "3840*2160".
+    pub resolution: String,
+    pub frame_rate: String,
+    pub gop: i32,
+    /// e.g. "CBR" / "VBR".
+    pub rc_mode: String,
+    pub rc_quality: String,
+    /// Max bitrate (kbps).
+    pub max_rate: i32,
+}
+
+/// Battery/power status.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BatteryStatus {
+    pub attached: bool,
+    pub charging: bool,
+    pub display_steps: i32,
+    pub total_steps: i32,
+}
+
+/// Result of exporting the device configuration backup.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConfigBackup {
+    /// Local path the tarball was written to.
+    pub output: String,
+    pub size_bytes: u64,
+}
+
+/// A trained AcousticsLab head within a workspace.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AcousticHead {
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub head_id: String,
+    pub n_classes: Option<i64>,
+    pub created_at: Option<String>,
+    pub status: String,
+    /// True for the currently active head.
+    pub active: bool,
+}
+
 // MARK: MCP params - detection
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -577,6 +693,29 @@ pub struct GetDetectionEventsParams {
     pub start_unix_ms: Option<i64>,
     /// Inclusive upper bound (Unix ms).
     pub end_unix_ms: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetAppLogsParams {
+    pub device_name: String,
+    /// App id from `list_apps` (e.g. "acousticslab").
+    pub app_id: String,
+    /// Last N lines, clamped to [1, 2000].
+    pub tail: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetVideoEncodeParams {
+    pub device_name: String,
+    /// "main" (default) or "sub".
+    pub stream: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ExportDeviceConfigParams {
+    pub device_name: String,
+    /// Local file path the config tarball is written to.
+    pub output: String,
 }
 
 // MARK: MCP params - rule system

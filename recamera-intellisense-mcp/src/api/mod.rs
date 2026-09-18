@@ -2,15 +2,19 @@
 // Each submodule owns one API family; all HTTP calls go through `api_client`.
 
 pub mod acoustic;
+pub mod apps;
+pub mod backup;
 pub mod capture;
 pub mod daemon;
 pub mod gpio;
 pub mod image;
 pub mod model;
+pub mod notify;
 pub mod relay;
 pub mod rule;
 pub mod storage;
 pub mod system;
+pub mod video;
 
 use anyhow::{bail, Result};
 use serde_json::Value;

@@ -59,11 +59,10 @@ DEFAULT_VISION_SOURCE = "builtin"
 def _validate_rules_against_sources(
     rules: List[Dict[str, Any]], sources: List[Dict[str, Any]]
 ) -> None:
-    """Compile-time check: unknown source ids and unproducible labels fail
-    loudly instead of writing a rule that can never fire (AGENT_QA: never
-    let the agent invent capabilities). A selected source whose class set is
-    unknowable (the ``builtin`` vision source follows the selected model)
-    disables the label check — never cry wolf."""
+    """Fail loudly on unknown source ids or labels the selected sources can
+    never produce — a silently never-firing rule is the worst outcome. The
+    ``builtin`` source's classes follow the selected vision model (unknowable
+    here), so its presence skips the label check: never cry wolf."""
     by_id = {s["id"]: s for s in sources}
     for rule in rules:
         name = rule.get("name", "")
@@ -105,12 +104,10 @@ def set_detection_rules(
 ) -> None:
     """Install an INFERENCE_SET trigger with *rules*.
 
-    Rules without an explicit ``source_filter`` are scoped to the ``builtin``
-    vision source (an empty filter matches EVERY source — including acoustic
-    classifications — which is almost never the intent). Pass
-    ``source_filter=[\"acousticslab\"]`` on a rule for sound-triggered
-    recording. Source ids and labels are validated against
-    ``get_record_sources`` before anything is written.
+    Rules without ``source_filter`` are scoped to the ``builtin`` vision
+    source — an empty filter matches EVERY source, including acoustic
+    classifications. Pass ``source_filter=[\"acousticslab\"]`` for sound.
+    Source ids and labels are validated against ``get_record_sources`` first.
 
     Also (by default):
       * enables the rule pipeline with JPG writer (`ensure_writer=True`);

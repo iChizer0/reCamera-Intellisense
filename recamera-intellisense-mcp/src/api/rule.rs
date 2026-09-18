@@ -20,10 +20,8 @@ const PATH_SOURCES: &str = "/api/app-center/v1/recording/sources";
 
 // MARK: Recording sources (App Center discovery surface)
 
-/// List the recording-rule sources the firmware exposes. Agents should use
-/// the returned ids for a rule's `source_filter` and validate `label_filter`
-/// against `classes` BEFORE compiling a rule — an unknown source id or an
-/// unproducible label makes a rule that never fires.
+/// Recording-rule sources. Validate a rule's `source_filter`/`label_filter`
+/// against these BEFORE compiling it.
 pub async fn get_record_sources(
     client: &ApiClient,
     device: &DeviceRecord,
@@ -296,10 +294,9 @@ pub async fn get_record_rule_json(client: &ApiClient, device: &DeviceRecord) -> 
     client.get_json(device, PATH_RECORD_RULE, None).await
 }
 
-/// Decoded INFERENCE_SET rules, or `[]` when another kind is selected. Gates
-/// on the raw `sCurrentSelected`: a retired-but-not-yet-migrated SED
-/// selection (migration runs at boot) yields `[]` here instead of tripping
-/// `parse_trigger`'s refusal.
+/// Decoded INFERENCE_SET rules; empty for other kinds. Gates on the raw
+/// `sCurrentSelected` so an unmigrated SED selection yields [] instead of
+/// tripping `parse_trigger`'s refusal.
 pub fn inference_rules_from_raw(data: &Value) -> Vec<DetectionRule> {
     let kind = data
         .get("sCurrentSelected")
@@ -581,8 +578,7 @@ fn detection_rule_to_json(rule: &DetectionRule) -> Value {
         "iDebounceTimes": rule.debounce_times,
         "lConfidenceFilter": rule.confidence_range_filter,
         "lClassFilter": rule.label_filter,
-        // Empty = match every source; name sources explicitly (e.g.
-        // ["builtin"] or ["acousticslab"]) to scope the rule.
+        // Empty = match every source; name sources to scope the rule.
         "lSourceFilter": rule.source_filter,
         "lRegionFilter": regions.iter().map(|poly| json!({"lPolygon": poly})).collect::<Vec<_>>(),
     })

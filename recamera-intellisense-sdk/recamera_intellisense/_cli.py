@@ -39,6 +39,8 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from recamera_intellisense import (
         acoustic,
+        apps,
+        backup,
         capture,
         detection,
         device,
@@ -46,17 +48,21 @@ if __name__ == "__main__" and __package__ is None:
         gpio,
         image,
         model,
+        notify,
         records,
         relay,
         rule,
         storage,
         system,
+        video,
     )
     from recamera_intellisense._coerce import to_bool
     from recamera_intellisense._errors import RecameraError
 else:
     from . import (
         acoustic,
+        apps,
+        backup,
         capture,
         detection,
         device,
@@ -64,11 +70,13 @@ else:
         gpio,
         image,
         model,
+        notify,
         records,
         relay,
         rule,
         storage,
         system,
+        video,
     )
     from ._coerce import to_bool
     from ._errors import RecameraError
@@ -85,6 +93,10 @@ _MODULES = (
     gpio,
     model,
     acoustic,
+    apps,
+    video,
+    notify,
+    backup,
     detection,
     files,
 )
@@ -145,6 +157,13 @@ EXAMPLES: Dict[str, str] = {
     "set_schedule_rule": "recamera set_schedule_rule device_name=cam1 schedule=null",
     "get_record_trigger": "recamera get_record_trigger device_name=cam1",
     "get_record_sources": "recamera get_record_sources device_name=cam1",
+    "get_notify_config": "recamera get_notify_config device_name=cam1",
+    "list_apps": "recamera list_apps device_name=cam1",
+    "get_app_logs": "recamera get_app_logs device_name=cam1 app_id=acousticslab tail=100",
+    "list_acoustic_models": "recamera list_acoustic_models device_name=cam1",
+    "get_video_encode": "recamera get_video_encode device_name=cam1 stream=sub",
+    "get_battery_status": "recamera get_battery_status device_name=cam1",
+    "export_device_config": "recamera export_device_config device_name=cam1 output=./cam1-config.tar",
     "set_record_trigger": (
         "recamera set_record_trigger device_name=cam1 "
         "'trigger={\"kind\":\"timer\",\"interval_seconds\":60}'"

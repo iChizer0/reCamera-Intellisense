@@ -82,15 +82,13 @@ pub async fn get_detection_rules(
     if !is_record_image_enabled(&cfg) {
         return Ok(vec![]);
     }
-    // Kind gate on the raw payload: a retired-but-unmigrated SED selection
-    // yields [] instead of an error.
+    // Kind gate on the raw payload: an unmigrated SED selection yields [].
     let raw = api_rule::get_record_rule_json(client, device).await?;
     Ok(api_rule::inference_rules_from_raw(&raw))
 }
 
-/// Vision intent assumed when a rule omits `source_filter`: an empty filter
-/// matches EVERY source — including acoustic classifications — which is
-/// almost never what an agent compiling a vision rule wants. Use the raw
+/// Vision intent for rules omitting `source_filter`: an empty filter matches
+/// EVERY source, including acoustic classifications. Use the raw
 /// `set_record_trigger` for an explicit all-sources rule.
 const DEFAULT_VISION_SOURCE: &str = "builtin";
 
@@ -118,10 +116,9 @@ pub async fn set_detection_rules(
     api_rule::set_trigger(client, device, &trigger).await
 }
 
-/// Compile-time check: unknown source ids and unproducible labels fail loudly
-/// instead of writing a rule that can never fire. A selected source whose
-/// class set is unknowable (the builtin vision source follows the selected
-/// model) disables the label check — never cry wolf.
+/// Fail loudly on unknown source ids or labels the selected sources can never
+/// produce. `builtin` classes follow the selected vision model (unknowable
+/// here), so its presence skips the label check — never cry wolf.
 fn validate_rules_against_sources(rules: &[DetectionRule], sources: &[RecordSource]) -> Result<()> {
     for rule in rules {
         let mut picked: Vec<&RecordSource> = Vec::new();

@@ -8,8 +8,9 @@ use rmcp::{
 };
 
 use crate::api::{
-    acoustic as api_acoustic, capture as api_capture, daemon as api_daemon, gpio as api_gpio,
-    image as api_image, rule as api_rule, storage as api_storage, system as api_system,
+    acoustic as api_acoustic, apps as api_apps, backup as api_backup, capture as api_capture,
+    daemon as api_daemon, gpio as api_gpio, image as api_image, notify as api_notify,
+    rule as api_rule, storage as api_storage, system as api_system, video as api_video,
 };
 use crate::api_client::ApiClient;
 use crate::detection;
@@ -708,6 +709,109 @@ impl ReCameraServer {
         let device = try_tool!(self.resolve(&params.device_name).await);
         let sources = try_tool!(api_rule::get_record_sources(&self.client, &device).await);
         Ok(try_tool!(json_result(&sources)))
+    }
+
+    #[tool(
+        description = "Get the result-push (notify) configuration: mode (off/MQTT/HTTP/UART), channel settings, and payload templates. Passwords/tokens are redacted. Shared by built-in vision and AcousticsLab results.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn get_notify_config(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let cfg = try_tool!(api_notify::get_notify_config(&self.client, &device).await);
+        Ok(try_tool!(json_result(&cfg)))
+    }
+
+    #[tool(
+        description = "List App Center applications (installed apps plus firmware system apps like 'builtin' and 'acousticslab') with status, version, and description.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn list_apps(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let apps = try_tool!(api_apps::list_apps(&self.client, &device).await);
+        Ok(try_tool!(json_result(&apps)))
+    }
+
+    #[tool(
+        description = "Get an app's recent log lines (spans the rotated log; tail clamped to [1, 2000]).",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn get_app_logs(
+        &self,
+        Parameters(params): Parameters<GetAppLogsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let logs = try_tool!(
+            api_apps::get_app_logs(&self.client, &device, &params.app_id, params.tail.unwrap_or(200))
+                .await
+        );
+        Ok(try_tool!(json_result(&logs)))
+    }
+
+    #[tool(
+        description = "List all trained AcousticsLab heads across workspaces; the active one is marked. Empty when the AcousticsLab app is stopped.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn list_acoustic_models(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let models = try_tool!(api_acoustic::list_acoustic_models(&self.client, &device).await);
+        Ok(try_tool!(json_result(&models)))
+    }
+
+    #[tool(
+        description = "Get video encode parameters (codec, resolution, frame rate, GOP, RC mode, max bitrate) for the 'main' or 'sub' stream.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn get_video_encode(
+        &self,
+        Parameters(params): Parameters<GetVideoEncodeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let enc = try_tool!(
+            api_video::get_video_encode(
+                &self.client,
+                &device,
+                params.stream.as_deref().unwrap_or("main"),
+            )
+            .await
+        );
+        Ok(try_tool!(json_result(&enc)))
+    }
+
+    #[tool(
+        description = "Get battery/power status (attached, charging, display steps). attached=false on base plates without a battery.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn get_battery_status(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let bat = try_tool!(api_system::get_battery_status(&self.client, &device).await);
+        Ok(try_tool!(json_result(&bat)))
+    }
+
+    #[tool(
+        description = "Export the full device configuration tarball to a LOCAL file path (read-only for the device). Useful to snapshot state before making changes.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn export_device_config(
+        &self,
+        Parameters(params): Parameters<ExportDeviceConfigParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let result = try_tool!(
+            api_backup::export_device_config(&self.client, &device, &params.output).await
+        );
+        Ok(try_tool!(json_result(&result)))
     }
 
     #[tool(

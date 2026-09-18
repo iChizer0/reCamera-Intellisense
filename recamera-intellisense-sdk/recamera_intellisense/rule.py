@@ -1,11 +1,8 @@
 """Record rule system: config, schedule, trigger tagged-union, and the
-recording-source discovery surface (``/record/rule/...`` +
-``/api/app-center/v1/recording/sources``).
+recording-source discovery surface.
 
-Firmware note: the legacy ``sed`` (sound-event) trigger kind is retired.
-Sound-triggered recording is an ``inference_set`` rule whose
-``source_filter`` names the ``acousticslab`` source; devices auto-migrate
-legacy ``dSED`` sections at boot."""
+The legacy ``sed`` (sound-event) trigger kind is retired: sound recording is
+an ``inference_set`` rule with ``source_filter=["acousticslab"]``."""
 
 from __future__ import annotations
 
@@ -170,16 +167,12 @@ _FULL_FRAME_REGION = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
 
 
 def get_record_sources(device_name: Optional[str] = None) -> List[Dict[str, Any]]:
-    """List the recording-rule sources this firmware exposes, normalized.
+    """Recording-rule sources, normalized: ``{id, kind, name, running,
+    frame_capable, event_capable, supports_roi, classes}``.
 
-    Each entry: ``{id, kind, name, running, frame_capable, event_capable,
-    supports_roi, classes}`` where ``classes`` is the union of labels the
-    source can currently produce (empty when unknowable, e.g. the ``builtin``
-    vision source — its labels follow the selected model, see
-    ``get_detection_models_info``). Use ``id`` values for a rule's
-    ``source_filter`` and ``classes`` to validate ``label_filter`` BEFORE
-    compiling a rule: an unknown source id or an unproducible label makes a
-    rule that never fires."""
+    ``classes`` is empty when unknowable (the ``builtin`` source follows the
+    selected vision model — see ``get_detection_models_info``). Validate
+    ``source_filter``/``label_filter`` against this BEFORE compiling a rule."""
     dev = _config.resolve(device_name)
     data = _http.get_json(dev, PATH_SOURCES)
     if not isinstance(data, dict):
@@ -225,10 +218,8 @@ def get_record_trigger(device_name: Optional[str] = None) -> Dict[str, Any]:
 
 
 def _get_inference_rules(device_name: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Decoded INFERENCE_SET rules, or `[]` when another kind is selected.
-
-    Gates on the raw ``sCurrentSelected`` (single GET): a retired-but-not-yet-
-    migrated ``SED`` selection (migration runs at boot) yields `[]` here
+    """Decoded INFERENCE_SET rules; `[]` for other kinds. Gates on the raw
+    ``sCurrentSelected`` so an unmigrated ``SED`` selection yields `[]`
     instead of tripping :func:`parse_trigger`'s refusal."""
     dev = _config.resolve(device_name)
     raw = _fetch_record_rule(dev)
@@ -315,8 +306,7 @@ def _detection_rule_to_json(rule: Dict[str, Any]) -> Dict[str, Any]:
         "iDebounceTimes": int(rule.get("debounce_times", 0)),
         "lConfidenceFilter": confidence,
         "lClassFilter": list(rule.get("label_filter", [])),
-        # Empty = match every source; name sources explicitly (e.g.
-        # ["builtin"] or ["acousticslab"]) to scope the rule.
+        # Empty = match every source; name sources to scope the rule.
         "lSourceFilter": list(rule.get("source_filter", [])),
         "lRegionFilter": [{"lPolygon": poly} for poly in regions],
     }

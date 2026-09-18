@@ -11,6 +11,7 @@ const PATH_DEVICE_INFO: &str = "/cgi-bin/entry.cgi/system/device-info";
 const PATH_RESOURCE_INFO: &str = "/cgi-bin/entry.cgi/system/resource-info";
 const PATH_TIME: &str = "/cgi-bin/entry.cgi/system/time";
 const PATH_REBOOT: &str = "/cgi-bin/entry.cgi/system/reboot";
+const PATH_BATTERY: &str = "/cgi-bin/entry.cgi/system/battery";
 
 fn device_info_from(d: &Value) -> Value {
     json!({
@@ -114,4 +115,18 @@ mod tests {
         assert_eq!(t["ntp"], json!({"address": "pool.ntp.org", "port": "123"}));
         assert_eq!(t["tz"], "UTC+0");
     }
+}
+
+/// Battery/power status. `attached` is false on base plates without a battery.
+pub async fn get_battery_status(
+    client: &ApiClient,
+    device: &DeviceRecord,
+) -> Result<crate::types::BatteryStatus> {
+    let d = client.get_json(device, PATH_BATTERY, None).await?;
+    Ok(crate::types::BatteryStatus {
+        attached: d.get("isAttached").and_then(|v| v.as_bool()).unwrap_or(false),
+        charging: d.get("isCharging").and_then(|v| v.as_bool()).unwrap_or(false),
+        display_steps: d.get("displaySteps").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+        total_steps: d.get("totalSteps").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+    })
 }

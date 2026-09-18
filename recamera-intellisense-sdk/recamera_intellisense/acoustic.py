@@ -11,25 +11,25 @@ if __name__ == "__main__" and __package__ is None:
 
     raise SystemExit(main())
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from . import _config, _http
+from ._errors import RecameraError
 
-__all__ = ["get_active_acoustic_model"]
+__all__ = ["get_active_acoustic_model", "list_acoustic_models"]
 
 PATH_ACTIVE = "/extension/acousticslab/api/v1/active"
+PATH_WORKSPACES = "/extension/acousticslab/api/v1/workspaces"
+PATH_HEADS = "/extension/acousticslab/api/v1/workspaces/{}/heads"
 
 
 def get_active_acoustic_model(device_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Return the active sound-event model, or `None`.
 
     Keys: `runtime_head_id`, `labels`, `n_classes?`, `sha256?`,
-    `activated_at?`. Use `labels` for the `label_filter` of an inference_set
-    record rule with `source_filter=["acousticslab"]` (the retired `sed`
-    trigger kind is gone). Returns `None` when the AcousticsLab app is
-    stopped — it is lifecycle-managed from the App Center; start it there
-    (or via the AcousticsLab console) first. `get_record_sources` exposes
-    the same labels together with the source's running state.
+    `activated_at?`. `labels` feeds the `label_filter` of inference_set rules
+    with `source_filter=["acousticslab"]`. `None` means the AcousticsLab app
+    is stopped (lifecycle-managed in the App Center).
     """
     dev = _config.resolve(device_name)
     data = _http.get_json(dev, PATH_ACTIVE)
@@ -47,4 +47,45 @@ def get_active_acoustic_model(device_name: Optional[str] = None) -> Optional[Dic
     }
 
 
-COMMANDS = {"get_active_acoustic_model": get_active_acoustic_model}
+def list_acoustic_models(device_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    """All trained heads across workspaces; the active one is marked
+    ``active: true``. [] when the AcousticsLab app is stopped. Read-only:
+    head activation is a separate deliberate action."""
+    dev = _config.resolve(device_name)
+    try:
+        ws_data = _http.get_json(dev, PATH_WORKSPACES)
+    except RecameraError:
+        return []  # AcousticsLab stopped / unreachable
+    if not isinstance(ws_data, dict):
+        return []
+    active_id = ""
+    try:
+        active = get_active_acoustic_model(device_name)
+        active_id = (active or {}).get("runtime_head_id", "")
+    except RecameraError:
+        pass
+    out: List[Dict[str, Any]] = []
+    for ws in ws_data.get("workspaces") or []:
+        if not isinstance(ws, dict) or not ws.get("id"):
+            continue
+        try:
+            heads_data = _http.get_json(dev, PATH_HEADS.format(ws["id"]))
+        except RecameraError:
+            continue
+        for head in (heads_data or {}).get("heads") or []:
+            if not isinstance(head, dict) or not head.get("head_id"):
+                continue
+            out.append({
+                "workspace_id": ws["id"],
+                "workspace_name": ws.get("name", ""),
+                "head_id": head["head_id"],
+                "n_classes": head.get("n_classes"),
+                "created_at": head.get("created_at"),
+                "status": head.get("status", ""),
+                "active": head["head_id"] == active_id,
+            })
+    return out
+
+
+COMMANDS = {"get_active_acoustic_model": get_active_acoustic_model,
+            "list_acoustic_models": list_acoustic_models}

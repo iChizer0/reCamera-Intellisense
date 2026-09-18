@@ -16,11 +16,13 @@ from typing import Any, Dict, Optional
 from . import _config, _http
 from ._coerce import require_confirm
 
-__all__ = ["get_device_info", "get_resource_info", "get_system_time", "reboot_device"]
+__all__ = ["get_device_info", "get_resource_info", "get_system_time",
+           "get_battery_status", "reboot_device"]
 
 PATH_DEVICE_INFO = "/cgi-bin/entry.cgi/system/device-info"
 PATH_RESOURCE_INFO = "/cgi-bin/entry.cgi/system/resource-info"
 PATH_TIME = "/cgi-bin/entry.cgi/system/time"
+PATH_BATTERY = "/cgi-bin/entry.cgi/system/battery"
 PATH_REBOOT = "/cgi-bin/entry.cgi/system/reboot"
 
 
@@ -79,9 +81,23 @@ def reboot_device(device_name: Optional[str] = None, *, confirm: bool = False) -
     _http.expect_ok(resp, "reboot device")
 
 
+def get_battery_status(device_name: Optional[str] = None) -> Dict[str, Any]:
+    """Battery/power status: ``{attached, charging, display_steps,
+    total_steps}``. ``attached`` is false on base plates without a battery."""
+    dev = _config.resolve(device_name)
+    d = _http.get_json(dev, PATH_BATTERY) or {}
+    return {
+        "attached": bool(d.get("isAttached", False)),
+        "charging": bool(d.get("isCharging", False)),
+        "display_steps": int(d.get("displaySteps", 0)),
+        "total_steps": int(d.get("totalSteps", 0)),
+    }
+
+
 COMMANDS = {
     "get_device_info": get_device_info,
     "get_resource_info": get_resource_info,
     "get_system_time": get_system_time,
+    "get_battery_status": get_battery_status,
     "reboot_device": reboot_device,
 }
