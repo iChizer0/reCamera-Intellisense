@@ -497,7 +497,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Get the currently active sound-event detection (acoustic) model. Returns null if no acoustic model is active.",
+        description = "Get the currently active sound-event detection (acoustic) model. Returns null if no acoustic model is active (the AcousticsLab app may be stopped — it is lifecycle-managed in the App Center). Use its labels in an inference_set rule with source_filter=['acousticslab'].",
         annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_active_acoustic_model(
@@ -557,7 +557,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set detection rules (INFERENCE_SET trigger). Auto-enables record image and default storage. confidence_range_filter must be [min,max] in [0,1].",
+        description = "Set detection rules (INFERENCE_SET trigger). Rules without source_filter default to the 'builtin' vision source; use source_filter=['acousticslab'] for sound, or set_record_trigger for an explicit all-sources rule. Source ids and labels are validated against get_record_sources first. Auto-enables record image and default storage. confidence_range_filter must be [min,max] in [0,1].",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -698,7 +698,20 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Get the current record trigger (tagged: inference_set | timer | gpio | tty | http | always_on | sed).",
+        description = "List recording-rule sources (id, kind, running state, producible classes). Use ids for a rule's source_filter and validate label_filter against classes BEFORE compiling rules.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn get_record_sources(
+        &self,
+        Parameters(params): Parameters<DeviceNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let sources = try_tool!(api_rule::get_record_sources(&self.client, &device).await);
+        Ok(try_tool!(json_result(&sources)))
+    }
+
+    #[tool(
+        description = "Get the current record trigger (tagged: inference_set | timer | gpio | tty | http | always_on). The legacy 'sed' kind is retired: sound recording is an inference_set rule with source_filter=['acousticslab'].",
         annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_record_trigger(
@@ -711,7 +724,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the record trigger. Provide a tagged union with 'kind' = inference_set|timer|gpio|tty|http|always_on|sed.",
+        description = "Set the record trigger. Provide a tagged union with 'kind' = inference_set|timer|gpio|tty|http|always_on. For sound-event recording use inference_set with a rule whose source_filter=['acousticslab'] (the legacy 'sed' kind is retired).",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1234,7 +1247,9 @@ impl ServerHandler for ReCameraServer {
                  3) Choose an AI model with `set_detection_model`, set a window with `set_detection_schedule`, \
                  and install rules via `set_detection_rules` (automatically picks INFERENCE_SET).\n\
                  4) Or configure a non-AI record trigger via `set_record_trigger` (`timer`, `gpio`, `tty`, \
-                 `http`, `always_on`, `sed`). For `sed`, first call `get_active_acoustic_model` to get labels.\n\
+                 `http`, `always_on`). For sound-event recording, call `get_record_sources` (or \
+                 `get_active_acoustic_model`) for labels, then install an `inference_set` rule with \
+                 `source_filter`=['acousticslab']; the legacy `sed` trigger kind is retired.\n\
                  5) Poll `get_detection_events` for recent matches and `fetch_file` / `fetch_record` to \
                  retrieve snapshots.\n\n\
                  For HTTPS devices, keep `allow_unsecured=false` on the trusted network and only opt in to \

@@ -144,6 +144,7 @@ EXAMPLES: Dict[str, str] = {
     "get_schedule_rule": "recamera get_schedule_rule device_name=cam1",
     "set_schedule_rule": "recamera set_schedule_rule device_name=cam1 schedule=null",
     "get_record_trigger": "recamera get_record_trigger device_name=cam1",
+    "get_record_sources": "recamera get_record_sources device_name=cam1",
     "set_record_trigger": (
         "recamera set_record_trigger device_name=cam1 "
         "'trigger={\"kind\":\"timer\",\"interval_seconds\":60}'"

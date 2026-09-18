@@ -48,11 +48,52 @@ def set_detection_schedule(
 
 
 def get_detection_rules(device_name: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Active INFERENCE_SET rules, or `[]` when the trigger is not INFERENCE_SET."""
-    trigger = _rule.get_record_trigger(device_name)
-    if trigger["kind"] != "inference_set":
-        return []
-    return list(trigger["rules"])
+    """Active INFERENCE_SET rules, or `[]` when the trigger is not INFERENCE_SET
+    (including a retired-but-unmigrated ``SED`` selection)."""
+    return list(_rule._get_inference_rules(device_name))
+
+
+DEFAULT_VISION_SOURCE = "builtin"
+
+
+def _validate_rules_against_sources(
+    rules: List[Dict[str, Any]], sources: List[Dict[str, Any]]
+) -> None:
+    """Compile-time check: unknown source ids and unproducible labels fail
+    loudly instead of writing a rule that can never fire (AGENT_QA: never
+    let the agent invent capabilities). A selected source whose class set is
+    unknowable (the ``builtin`` vision source follows the selected model)
+    disables the label check — never cry wolf."""
+    by_id = {s["id"]: s for s in sources}
+    for rule in rules:
+        name = rule.get("name", "")
+        selected = list(rule.get("source_filter") or [])
+        if not selected:  # explicit empty = all sources
+            selected = list(by_id)
+        unknown = [sid for sid in selected if sid not in by_id]
+        if unknown:
+            raise ValueError(
+                f"rule {name!r}: unknown source_filter id(s) {unknown}; "
+                f"available: {sorted(by_id)}"
+            )
+        labels = list(rule.get("label_filter") or [])
+        if not labels:
+            continue
+        picked = [by_id[sid] for sid in selected]
+        if any(s["kind"] == "builtin" for s in picked):
+            continue  # builtin classes follow the active vision model: unknowable
+        producible = {c for s in picked for c in s["classes"]}
+        bad = [lbl for lbl in labels if lbl not in producible]
+        if bad:
+            states = ", ".join(
+                f"{s['id']}({'running' if s['running'] else 'STOPPED'}, "
+                f"{len(s['classes'])} classes)" for s in picked
+            )
+            raise ValueError(
+                f"rule {name!r}: label(s) {bad} cannot be produced by the "
+                f"selected source(s) [{states}]; check get_record_sources and "
+                f"the AcousticsLab/App Center state before compiling this rule"
+            )
 
 
 def set_detection_rules(
@@ -64,6 +105,13 @@ def set_detection_rules(
 ) -> None:
     """Install an INFERENCE_SET trigger with *rules*.
 
+    Rules without an explicit ``source_filter`` are scoped to the ``builtin``
+    vision source (an empty filter matches EVERY source — including acoustic
+    classifications — which is almost never the intent). Pass
+    ``source_filter=[\"acousticslab\"]`` on a rule for sound-triggered
+    recording. Source ids and labels are validated against
+    ``get_record_sources`` before anything is written.
+
     Also (by default):
       * enables the rule pipeline with JPG writer (`ensure_writer=True`);
       * ensures a storage slot is available (`ensure_storage=True`).
@@ -72,9 +120,17 @@ def set_detection_rules(
         raise ValueError("'rules' must be a list of detection-rule dicts.")
     ensure_writer = to_bool(ensure_writer, "ensure_writer")
     ensure_storage = to_bool(ensure_storage, "ensure_storage")
+    prepared: List[Dict[str, Any]] = []
+    for rule in rules:
+        r = dict(rule)
+        if r.get("source_filter") is None:
+            r["source_filter"] = [DEFAULT_VISION_SOURCE]
+        prepared.append(r)
+    if prepared:
+        _validate_rules_against_sources(prepared, _rule.get_record_sources(device_name))
     if ensure_storage:
         _storage.ensure_storage(device_name)
-    trigger = {"kind": "inference_set", "rules": rules}
+    trigger = {"kind": "inference_set", "rules": prepared}
     _rule.set_record_trigger(device_name, trigger=trigger)
     if ensure_writer:
         cfg = _rule.get_record_config(device_name)

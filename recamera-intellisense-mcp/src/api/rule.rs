@@ -5,8 +5,8 @@ use crate::api::expect_ok;
 use crate::api_client::ApiClient;
 use crate::types::{
     AvailableGpio, AvailableTty, DetectionRule, DeviceRecord, GpioTrigger, GpioTriggerSignal,
-    GpioTriggerState, RecordTrigger, RuleConfig, RuleEvent, RuleEventOwner, RuleInfo,
-    ScheduleRange, SedTrigger, TtyTrigger, WriterConfig,
+    GpioTriggerState, RecordSource, RecordTrigger, RuleConfig, RuleEvent, RuleEventOwner, RuleInfo,
+    ScheduleRange, TtyTrigger, WriterConfig,
 };
 
 // MARK: Paths
@@ -16,6 +16,78 @@ const PATH_INFO: &str = "/cgi-bin/entry.cgi/record/rule/info";
 const PATH_SCHEDULE: &str = "/cgi-bin/entry.cgi/record/rule/schedule-rule-config";
 const PATH_RECORD_RULE: &str = "/cgi-bin/entry.cgi/record/rule/record-rule-config";
 const PATH_HTTP_ACTIVATE: &str = "/cgi-bin/entry.cgi/record/rule/http-rule-activate";
+const PATH_SOURCES: &str = "/api/app-center/v1/recording/sources";
+
+// MARK: Recording sources (App Center discovery surface)
+
+/// List the recording-rule sources the firmware exposes. Agents should use
+/// the returned ids for a rule's `source_filter` and validate `label_filter`
+/// against `classes` BEFORE compiling a rule — an unknown source id or an
+/// unproducible label makes a rule that never fires.
+pub async fn get_record_sources(
+    client: &ApiClient,
+    device: &DeviceRecord,
+) -> Result<Vec<RecordSource>> {
+    let data = client.get_json(device, PATH_SOURCES, None).await?;
+    let mut out = Vec::new();
+    let items = data
+        .get("sources")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for s in items {
+        let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if id.is_empty() {
+            continue;
+        }
+        let mut classes: Vec<String> = Vec::new();
+        if let Some(signals) = s.get("signals").and_then(|v| v.as_array()) {
+            for sig in signals {
+                let ty = sig.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if ty != "detection" && ty != "classification" {
+                    continue;
+                }
+                if let Some(list) = sig.get("classes").and_then(|v| v.as_array()) {
+                    for c in list {
+                        if let Some(c) = c.as_str() {
+                            if !classes.iter().any(|x| x == c) {
+                                classes.push(c.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out.push(RecordSource {
+            id: id.to_string(),
+            kind: s
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("app")
+                .to_string(),
+            name: s
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(id)
+                .to_string(),
+            running: s.get("running").and_then(|v| v.as_bool()).unwrap_or(false),
+            frame_capable: s
+                .get("frame_capable")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            event_capable: s
+                .get("event_capable")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            supports_roi: s
+                .get("supports_roi")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            classes,
+        });
+    }
+    Ok(out)
+}
 
 // MARK: Global config (enable + writer)
 
@@ -215,8 +287,31 @@ pub async fn set_schedule(
 // MARK: Record-rule trigger (tagged by sCurrentSelected)
 
 pub async fn get_trigger(client: &ApiClient, device: &DeviceRecord) -> Result<RecordTrigger> {
-    let data = client.get_json(device, PATH_RECORD_RULE, None).await?;
+    let data = get_record_rule_json(client, device).await?;
     parse_trigger(&data)
+}
+
+/// Raw `record-rule-config` payload (no tagged-union decoding).
+pub async fn get_record_rule_json(client: &ApiClient, device: &DeviceRecord) -> Result<Value> {
+    client.get_json(device, PATH_RECORD_RULE, None).await
+}
+
+/// Decoded INFERENCE_SET rules, or `[]` when another kind is selected. Gates
+/// on the raw `sCurrentSelected`: a retired-but-not-yet-migrated SED
+/// selection (migration runs at boot) yields `[]` here instead of tripping
+/// `parse_trigger`'s refusal.
+pub fn inference_rules_from_raw(data: &Value) -> Vec<DetectionRule> {
+    let kind = data
+        .get("sCurrentSelected")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if kind != "INFERENCE_SET" {
+        return vec![];
+    }
+    data.get("lInferenceSet")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().map(parse_detection_rule).collect())
+        .unwrap_or_default()
 }
 
 pub async fn set_trigger(
@@ -317,36 +412,11 @@ pub fn parse_trigger(data: &Value) -> Result<RecordTrigger> {
         }
         "HTTP" => RecordTrigger::Http,
         "ALWAYS_ON" => RecordTrigger::AlwaysOn,
-        "SED" => {
-            let d = data.get("dSED").context("missing dSED")?;
-            let confidence: Vec<f64> = d
-                .get("lConfidenceFilter")
-                .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
-                .unwrap_or_else(|| vec![0.0, 1.0]);
-            let labels: Vec<String> = d
-                .get("lClassFilter")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            RecordTrigger::Sed(SedTrigger {
-                model_id: d
-                    .get("sID")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                consecutive_window_ms: d
-                    .get("iConsecutiveWindowMs")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-                confidence_range_filter: confidence,
-                label_filter: labels,
-            })
-        }
+        "SED" => bail!(
+            "the 'sed' trigger kind is retired: firmware migrates dSED sections to \
+             inference_set rules on boot; use kind='inference_set' with \
+             source_filter=[\"acousticslab\"] for sound-triggered recording"
+        ),
         other => bail!("unknown trigger kind '{other}'"),
     })
 }
@@ -354,24 +424,7 @@ pub fn parse_trigger(data: &Value) -> Result<RecordTrigger> {
 /// Keys on `/record-rule-config` that are owned by **one specific** trigger
 /// kind. When switching kinds, we copy forward every such key that the device
 /// already has so other clients' remembered settings survive.
-const TRIGGER_SIBLING_KEYS: &[&str] = &["lInferenceSet", "dTimer", "dGPIO", "dTTY", "dSED"];
-
-fn validate_sed_trigger(s: &SedTrigger) -> Result<()> {
-    if s.confidence_range_filter.len() != 2 {
-        bail!("SED trigger confidence_range_filter must be exactly [min, max]");
-    }
-    let c = &s.confidence_range_filter;
-    if !(0.0..=1.0).contains(&c[0]) || !(0.0..=1.0).contains(&c[1]) {
-        bail!("SED trigger confidence_range_filter values must be within [0.0, 1.0]");
-    }
-    if c[0] > c[1] {
-        bail!("SED trigger confidence_range_filter min must be <= max");
-    }
-    if s.consecutive_window_ms > 60000 {
-        bail!("SED trigger consecutive_window_ms must be within [0, 60000]");
-    }
-    Ok(())
-}
+const TRIGGER_SIBLING_KEYS: &[&str] = &["lInferenceSet", "dTimer", "dGPIO", "dTTY"];
 
 /// Return the `(sCurrentSelected, [(key, value), ...])` patch that fully
 /// describes a trigger. Patch entries overwrite any pre-existing value for
@@ -416,21 +469,6 @@ fn trigger_patch(trigger: &RecordTrigger) -> Result<(&'static str, Vec<(&'static
         }
         RecordTrigger::Http => ("HTTP", vec![]),
         RecordTrigger::AlwaysOn => ("ALWAYS_ON", vec![]),
-        RecordTrigger::Sed(s) => {
-            validate_sed_trigger(s)?;
-            (
-                "SED",
-                vec![(
-                    "dSED",
-                    json!({
-                        "sID": s.model_id,
-                        "iConsecutiveWindowMs": s.consecutive_window_ms,
-                        "lConfidenceFilter": s.confidence_range_filter,
-                        "lClassFilter": s.label_filter,
-                    }),
-                )],
-            )
-        }
     })
 }
 
@@ -484,8 +522,7 @@ fn parse_detection_rule(v: &Value) -> DetectionRule {
                 .collect()
         })
         .unwrap_or_default();
-    let regions = v.get("lRegionFilter").and_then(|v| v.as_array()).map(|rs| {
-        rs.iter()
+    let regions = v.get("lRegionFilter").and_then(|v| v.as_array()).map(|rs| {        rs.iter()
             .filter_map(|r| {
                 r.get("lPolygon").and_then(|v| v.as_array()).map(|pts| {
                     pts.iter()
@@ -498,6 +535,16 @@ fn parse_detection_rule(v: &Value) -> DetectionRule {
             })
             .collect()
     });
+    let source_filter: Vec<String> = v
+        .get("lSourceFilter")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
     DetectionRule {
         name: v
             .get("sID")
@@ -510,6 +557,7 @@ fn parse_detection_rule(v: &Value) -> DetectionRule {
             .unwrap_or(0) as i32,
         confidence_range_filter: confidence,
         label_filter: labels,
+        source_filter,
         region_filter: regions,
     }
 }
@@ -533,6 +581,9 @@ fn detection_rule_to_json(rule: &DetectionRule) -> Value {
         "iDebounceTimes": rule.debounce_times,
         "lConfidenceFilter": rule.confidence_range_filter,
         "lClassFilter": rule.label_filter,
+        // Empty = match every source; name sources explicitly (e.g.
+        // ["builtin"] or ["acousticslab"]) to scope the rule.
+        "lSourceFilter": rule.source_filter,
         "lRegionFilter": regions.iter().map(|poly| json!({"lPolygon": poly})).collect::<Vec<_>>(),
     })
 }
@@ -551,6 +602,33 @@ mod tests {
                 debounce_times: 3,
                 confidence_range_filter: vec![0.5, 1.0],
                 label_filter: vec!["person".into()],
+                source_filter: vec!["builtin".into()],
+                region_filter: None,
+            }],
+        };
+        let j = trigger_to_json(&t).unwrap();
+        assert_eq!(j["lInferenceSet"][0]["lSourceFilter"], json!(["builtin"]));
+        let back = parse_trigger(&j).unwrap();
+        match back {
+            RecordTrigger::InferenceSet { rules } => {
+                assert_eq!(rules.len(), 1);
+                assert_eq!(rules[0].name, "person");
+                assert_eq!(rules[0].source_filter, vec!["builtin"]);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn acoustic_rule_source_binding_survives_roundtrip() {
+        // The canonical sound-event rule post-SED-retirement.
+        let t = RecordTrigger::InferenceSet {
+            rules: vec![DetectionRule {
+                name: "acousticslab".into(),
+                debounce_times: 3,
+                confidence_range_filter: vec![0.5, 1.0],
+                label_filter: vec!["Cat".into()],
+                source_filter: vec!["acousticslab".into()],
                 region_filter: None,
             }],
         };
@@ -558,8 +636,8 @@ mod tests {
         let back = parse_trigger(&j).unwrap();
         match back {
             RecordTrigger::InferenceSet { rules } => {
-                assert_eq!(rules.len(), 1);
-                assert_eq!(rules[0].name, "person");
+                assert_eq!(rules[0].source_filter, vec!["acousticslab"]);
+                assert_eq!(rules[0].label_filter, vec!["Cat"]);
             }
             _ => panic!("wrong variant"),
         }
@@ -615,71 +693,60 @@ mod tests {
     }
 
     #[test]
-    fn trigger_roundtrip_sed() {
-        let t = RecordTrigger::Sed(SedTrigger {
-            model_id: "".into(),
-            consecutive_window_ms: 100,
-            confidence_range_filter: vec![0.5, 1.0],
-            label_filter: vec!["Cat".into()],
+    fn sed_trigger_is_retired_with_guidance() {
+        // The legacy SED kind must fail loudly and point at the replacement.
+        let legacy = json!({
+            "sCurrentSelected": "SED",
+            "dSED": {"sID": "", "iConsecutiveWindowMs": 100,
+                     "lConfidenceFilter": [0.5, 1.0], "lClassFilter": ["Cat"]},
         });
-        let j = trigger_to_json(&t).unwrap();
-        assert_eq!(j["sCurrentSelected"], "SED");
-        assert_eq!(j["dSED"]["iConsecutiveWindowMs"], 100);
-        let back = parse_trigger(&j).unwrap();
-        match back {
-            RecordTrigger::Sed(s) => {
-                assert_eq!(s.consecutive_window_ms, 100);
-                assert_eq!(s.label_filter, vec!["Cat"]);
-            }
-            _ => panic!("wrong variant"),
-        }
+        let err = parse_trigger(&legacy).unwrap_err().to_string();
+        assert!(err.contains("retired"), "unexpected error: {err}");
+        assert!(err.contains("acousticslab"), "unexpected error: {err}");
     }
 
     #[test]
-    fn sed_trigger_deserializes_from_json_rpc_payload() {
+    fn sed_json_payload_is_not_a_valid_trigger() {
         let json = r#"{"kind":"sed","model_id":"","consecutive_window_ms":0,"confidence_range_filter":[0.4,1.0],"label_filter":["Cat"]}"#;
-        let t: RecordTrigger = serde_json::from_str(json).unwrap();
-        match t {
-            RecordTrigger::Sed(s) => {
-                assert_eq!(s.consecutive_window_ms, 0);
-                assert_eq!(s.confidence_range_filter, vec![0.4, 1.0]);
-                assert_eq!(s.label_filter, vec!["Cat"]);
-            }
-            _ => panic!("wrong variant"),
-        }
+        assert!(serde_json::from_str::<RecordTrigger>(json).is_err());
     }
 
     #[test]
-    fn sed_trigger_rejects_out_of_range_confidence() {
-        let t = RecordTrigger::Sed(SedTrigger {
-            model_id: "".into(),
-            consecutive_window_ms: 0,
-            confidence_range_filter: vec![0.5, 1.5],
-            label_filter: vec!["Cat".into()],
+    fn inference_rules_from_raw_gates_on_kind() {
+        let retired = json!({
+            "sCurrentSelected": "SED",
+            "dSED": {"sID": "", "lClassFilter": ["Cat"]},
         });
-        assert!(trigger_to_json(&t).is_err());
+        assert!(inference_rules_from_raw(&retired).is_empty());
+        let timer = json!({"sCurrentSelected": "TIMER"});
+        assert!(inference_rules_from_raw(&timer).is_empty());
+        let inference = json!({
+            "sCurrentSelected": "INFERENCE_SET",
+            "lInferenceSet": [{"sID": "acousticslab", "lClassFilter": ["Cat"],
+                               "lSourceFilter": ["acousticslab"]}],
+        });
+        let rules = inference_rules_from_raw(&inference);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].source_filter, vec!["acousticslab"]);
     }
 
     #[test]
-    fn sed_trigger_rejects_inverted_confidence() {
-        let t = RecordTrigger::Sed(SedTrigger {
-            model_id: "".into(),
-            consecutive_window_ms: 0,
-            confidence_range_filter: vec![0.8, 0.2],
-            label_filter: vec!["Cat".into()],
+    fn merge_no_longer_carries_dsed_sibling() {
+        let current = json!({
+            "sCurrentSelected": "SED",
+            "dSED": {"sID": "old"},
+            "dTTY": {"sName": "tty0", "sCommand": "SHOOT"},
         });
-        assert!(trigger_to_json(&t).is_err());
-    }
-
-    #[test]
-    fn sed_trigger_rejects_window_too_large() {
-        let t = RecordTrigger::Sed(SedTrigger {
-            model_id: "".into(),
-            consecutive_window_ms: 60001,
-            confidence_range_filter: vec![0.5, 1.0],
-            label_filter: vec!["Cat".into()],
-        });
-        assert!(trigger_to_json(&t).is_err());
+        let out = merge_trigger_payload(
+            Some(&current),
+            &RecordTrigger::Timer { interval_seconds: 30 },
+        )
+        .unwrap();
+        assert!(out.get("dSED").is_none());
+        // The selected kind's patch wins; untouched siblings carry forward.
+        assert_eq!(out["dTimer"], json!({"iIntervalSeconds": 30}));
+        assert_eq!(out["dTTY"], json!({"sName": "tty0", "sCommand": "SHOOT"}));
+        assert_eq!(out["sCurrentSelected"], "TIMER");
     }
 
     #[test]
@@ -764,7 +831,8 @@ mod tests {
         assert_eq!(payload["dGPIO"]["sState"], "PULL_UP");
         assert_eq!(payload["dTTY"]["sCommand"], "SHOOT");
         assert_eq!(payload["lInferenceSet"][0]["sID"], "legacy-rule");
-        assert_eq!(payload["dSED"]["lClassFilter"][0], "Cat");
+        // The retired SED section is NOT carried forward.
+        assert!(payload.get("dSED").is_none());
         // Server-only metadata is NOT round-tripped.
         assert!(payload.get("bSomeServerOnlyField").is_none());
     }

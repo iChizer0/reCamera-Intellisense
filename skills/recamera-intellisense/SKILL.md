@@ -69,8 +69,8 @@ Full catalogue, per-command arguments, and key schemas: **[REFERENCE.md](REFEREN
 - **System**: `get_device_info` (firmware/sensor/serial), `get_resource_info` (CPU/NPU/mem/storage %), `get_system_time`, `reboot_device` (**disruptive** — drops all streams/sessions).
 - **Image (ISP)**: `get_image_settings` (full config: video adjustment, night-to-day, 3 scene profiles), `set_image_settings section=… scene_id=… 'values={…}'` — sections: `video_adjustment`, `night_to_day`, `adjustment`, `exposure`, `backlight`, `white_balance`, `enhancement`; read-modify-write with validation (incl. BLC/HDR/HLC mutual exclusion).
 - **Detection**: `get_detection_models_info`, `get/set_detection_model` (by `model_id` or `model_name`), `get/set_detection_schedule`, `get/set_detection_rules`, `get_detection_events` (`start_unix_ms`/`end_unix_ms`), `clear_detection_events`. Facade: `set_detection_rules` installs the `inference_set` trigger and ensures writer + storage by default; `get_detection_rules` returns `[]` when the active trigger is not `inference_set`.
-- **Acoustic**: `get_active_acoustic_model` → labels for the `sed` trigger.
-- **Rule system**: `get_rule_system_info`, `get/set_record_config`, `get/set_schedule_rule`, `get/set_record_trigger`, `activate_http_trigger`. Trigger kinds: `inference_set`, `timer`, `gpio`, `tty`, `http`, `always_on`, `sed` — only one is active at a time.
+- **Acoustic**: `get_active_acoustic_model` → labels of the active sound model (null when the AcousticsLab app is stopped — start it in the App Center).
+- **Rule system**: `get_rule_system_info`, `get_record_sources` (discover source ids + producible classes BEFORE compiling rules), `get/set_record_config`, `get/set_schedule_rule`, `get/set_record_trigger`, `activate_http_trigger`. Trigger kinds: `inference_set`, `timer`, `gpio`, `tty`, `http`, `always_on` — only one is active at a time. The legacy `sed` kind is **retired**: sound-event recording is an `inference_set` rule with `source_filter=["acousticslab"]`; firmware auto-migrates old `sed` configs at boot.
 - **Capture**: `get_capture_status`, `start_capture` (`format=JPG|RAW|MP4`, `output` is an **on-device** directory — omit for the selected slot), `stop_capture`, `capture_image` (one-shot JPG → `{event, path, size, content_base64}`).
 - **Storage**: `get_storage_status`, `set_storage_slot`, `configure_storage_quota`, `storage_task_submit/status/cancel` (actions `FORMAT`/`FREE_UP`/`EJECT`/`REMOVE_FILES_OR_DIRECTORIES`; `FORMAT`/`FREE_UP` must be async).
 - **Records**: `list_records` (paginated `{entries, offset, limit, total, has_more}`), `fetch_record` (images/≤5 MiB inline base64; larger → `{url, note}`). Paths are relative to the record data dir.
@@ -81,8 +81,9 @@ Full catalogue, per-command arguments, and key schemas: **[REFERENCE.md](REFEREN
 
 1. Supply complete arguments in one call; never prompt interactively.
 2. Identify targets by `device_name`; `list_devices` is cheap.
-3. `label_filter` takes **label names** from `get_detection_models_info` (vision) or `get_active_acoustic_model` (sound) — never numeric indexes.
-4. AI-only recording → `set_detection_rules`; hybrid triggers (GPIO/timer/TTY/HTTP/always-on/SED) → `set_record_trigger` directly.
+3. `label_filter` takes **label names** — vision from `get_detection_models_info`, sound from `get_record_sources` (or `get_active_acoustic_model`) — never numeric indexes.
+4. Compile against reality: call `get_record_sources` first and only reference source ids + labels it reports; an unknown source or unproducible label is a loud error, not a silent never-firing rule. `set_detection_rules` scopes rules without `source_filter` to the `builtin` vision source (an empty filter matches EVERY source, including audio).
+5. AI recording (vision or sound) → `set_detection_rules`; hybrid triggers (GPIO/timer/TTY/HTTP/always-on) → `set_record_trigger` directly.
 5. Poll `get_detection_events` with a checkpointed `start_unix_ms` (1–10 s cadence); `clear_detection_events` to reset.
 6. Prefer event metadata first; fetch imagery only when needed (inline ≤5 MiB, else URL + note).
 7. Schedules: `[{"start":"Mon 08:00:00","end":"Mon 18:00:00"}]`; `schedule=null` disables (always active). Detection-rule and trigger schemas: see REFERENCE.md.
@@ -121,12 +122,22 @@ rci get_gpio_value device_name=cam1 pin_id=2 debounce_ms=50
 rci set_gpio_value device_name=cam1 pin_id=1 value=1
 
 # 7 — Sound-event trigger
-rci get_active_acoustic_model device_name=cam1            # pick a label
+rci get_record_sources device_name=cam1                     # acousticslab running? pick a class
 rci set_record_config device_name=cam1 rule_enabled=true writer_format=MP4
-rci set_record_trigger device_name=cam1 'trigger={"kind":"sed","model_id":"","consecutive_window_ms":0,"confidence_range_filter":[0.5,1.0],"label_filter":["Cat"]}'
+rci set_detection_rules device_name=cam1 'rules=[{"name":"alarm","source_filter":["acousticslab"],"label_filter":["Cat"],"debounce_times":3}]'
 ```
 
 Event-polling loop (Python): checkpoint `ckpt = int(time.time()*1000)`, call `get_detection_events(device_name=…, start_unix_ms=ckpt)`, advance `ckpt` past each `timestamp_unix_ms`, `fetch_file` any `snapshot_path`, sleep 2 s.
+
+## Scope and hand-off
+
+This skill **orchestrates existing device capabilities** (compile intents into persistent record rules, capture, storage, GPIO) — it never adds new on-device behavior. When a request needs a new capability:
+
+- **Custom app / model pipeline / result post-processing** → use the [recamera-pysdk](https://github.com/Seeed-Studio/recamera-pro-ext-api/tree/main/skill/recamera-pysdk) skill to assess, build, package, and debug a reCamera Pro App for the App Center.
+- **Custom sound classes** → train/activate a head in the AcousticsLab console (`/extension/acousticslab`); this skill consumes its labels read-only.
+- **App lifecycle / output (MQTT/HTTP/UART) config** → the device App Center web UI (or `recamera-pysdk` for app-level debugging).
+
+If neither covers the request, say so plainly instead of inventing capabilities.
 
 ## Troubleshooting
 
@@ -140,7 +151,7 @@ Event-polling loop (Python): checkpoint `ckpt = int(time.time()*1000)`, call `ge
 | `{url, note}` instead of content | Video or >5 MiB — fetch the URL or raise `max_inline_bytes`. |
 | `sync=true` rejected | `FORMAT`/`FREE_UP` are async-only; poll `storage_task_status`. |
 | Model "not installed" | Pick `model_name`/`model_id` from `get_detection_models_info`. |
-| Acoustic model is `null` / SED trigger fails | Activate a model in `/extension/acousticslab` first; labels must match; `consecutive_window_ms` ≤ 60000. |
+| Acoustic model is `null` / sound rule never fires | The AcousticsLab app is stopped or has no active head — start it in the App Center / AcousticsLab console; verify labels via `get_record_sources`; legacy `sed` triggers are retired (migrated at boot). |
 | `start_capture` code 30022 | `output` must be under a mounted slot (`get_storage_status.mount_path`) — or omit it. |
 | `ImportError: recamera_intellisense` | `PYTHONPATH` must point at `{baseDir}/scripts`; run `python3 -m recamera_intellisense`. |
 | `code=500 … Backend connection failed` | Device-side daemon down — reboot the camera / check its logs, then retry. |

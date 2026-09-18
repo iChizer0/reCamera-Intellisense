@@ -35,6 +35,7 @@ from .relay import close_relay, get_relay_status, open_relay
 from .rule import (
     activate_http_trigger,
     get_record_config,
+    get_record_sources,
     get_record_trigger,
     get_rule_system_info,
     get_schedule_rule,
@@ -52,7 +53,7 @@ from .storage import (
 )
 from .system import get_device_info, get_resource_info, get_system_time, reboot_device
 
-__version__ = "2.1.1"
+__version__ = "2.1.2"
 
 __all__ = [
     "RecameraError",
@@ -70,6 +71,7 @@ __all__ = [
     "get_schedule_rule",
     "set_schedule_rule",
     "get_record_trigger",
+    "get_record_sources",
     "set_record_trigger",
     "activate_http_trigger",
     # storage

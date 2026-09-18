@@ -24,8 +24,12 @@ def get_active_acoustic_model(device_name: Optional[str] = None) -> Optional[Dic
     """Return the active sound-event model, or `None`.
 
     Keys: `runtime_head_id`, `labels`, `n_classes?`, `sha256?`,
-    `activated_at?`. Use `labels` for the SED `label_filter`; leave
-    `model_id` empty to match whatever model is currently active.
+    `activated_at?`. Use `labels` for the `label_filter` of an inference_set
+    record rule with `source_filter=["acousticslab"]` (the retired `sed`
+    trigger kind is gone). Returns `None` when the AcousticsLab app is
+    stopped — it is lifecycle-managed from the App Center; start it there
+    (or via the AcousticsLab console) first. `get_record_sources` exposes
+    the same labels together with the source's running state.
     """
     dev = _config.resolve(device_name)
     data = _http.get_json(dev, PATH_ACTIVE)

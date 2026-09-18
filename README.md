@@ -10,7 +10,7 @@ AI-powered monitoring and control for [reCamera Pro](https://wiki.seeedstudio.co
 - **Event correlation & reporting** — the on-device monitor merges rule triggers with captured files in real-time, queryable by time range via HTTP API.
 - **Agent-friendly CLI / SDK** — every operation is a single CLI command accepting JSON, or a Python function call, designed for seamless AI-agent integration (Claw, LangChain, etc.).
 
-For detailed API signatures and CLI schemas, see [API Reference](skills/recamera-intellisense/REFERENCE.md).
+For detailed API signatures and CLI schemas, see [API Reference](skills/recamera-intellisense/REFERENCE.md). To build **new** on-device capabilities (custom apps, model pipelines), use the [reamera-pysdk](https://github.com/Seeed-Studio/recamera-pro-ext-api/tree/main/skill/recamera-pysdk) skill instead — this project orchestrates what the device already does.
 
 ## Installation
 

@@ -77,6 +77,7 @@ Pass `null`, `[]`, or omit `schedule` to disable the schedule and make it always
 | Command | Required keys | Optional keys |
 |---|---|---|
 | `get_rule_system_info` | `device_name` | — |
+| `get_record_sources` | `device_name` | — |
 | `get_record_config` | `device_name` | — |
 | `set_record_config` | `device_name`, `rule_enabled`, `writer_format` | `writer_interval_ms` |
 | `get_schedule_rule` | `device_name` | — |
@@ -85,7 +86,9 @@ Pass `null`, `[]`, or omit `schedule` to disable the schedule and make it always
 | `set_record_trigger` | `device_name`, `trigger` | — |
 | `activate_http_trigger` | `device_name` | — |
 
-Supported trigger kinds are `inference_set`, `timer`, `gpio`, `tty`, `http`, `always_on`, and `sed`. Only one record trigger is active at a time.
+Supported trigger kinds are `inference_set`, `timer`, `gpio`, `tty`, `http`, and `always_on`. Only one record trigger is active at a time. The legacy `sed` (sound-event) kind is **retired**: firmware auto-migrates old `sed` configs into `inference_set` rules at boot; for sound-triggered recording use `inference_set` with `source_filter=["acousticslab"]`.
+
+`get_record_sources` lists the recording-rule sources (`builtin` vision, `acousticslab` sound, installed apps) with their running state and currently producible `classes`. Compile rules against it: unknown source ids and unproducible labels are rejected loudly by `set_detection_rules`.
 
 Examples:
 
@@ -95,10 +98,6 @@ Examples:
 
 ```json
 {"kind":"gpio","num":106,"state":"PULL_UP","signal":"FALLING","debounce_ms":50}
-```
-
-```json
-{"kind":"sed","model_id":"","consecutive_window_ms":0,"confidence_range_filter":[0.5,1.0],"label_filter":["Yes"]}
 ```
 
 ## Capture
@@ -159,13 +158,15 @@ Actions are `FORMAT`, `FREE_UP`, `EJECT`, and `REMOVE_FILES_OR_DIRECTORIES`. `FO
   "debounce_times": 3,
   "confidence_range_filter": [0.25, 1.0],
   "label_filter": ["person"],
+  "source_filter": ["builtin"],
   "region_filter": [[[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9]]]
 }
 ```
 
-- `label_filter` holds **label names** from `get_detection_models_info`.labels (vision) or `get_active_acoustic_model`.labels (sound) — never indexes. Empty matches any label.
-- `region_filter` is a list of polygons of normalized `[x, y]` in `[0,1]`; omit/null = full frame.
-- `confidence_range_filter` is `[min, max]`, both in `[0.0, 1.0]`, `min <= max` (default `[0.25, 1.0]`). `debounce_times` defaults to `3` consecutive matching frames.
+- `label_filter` holds **label names** from `get_detection_models_info`.labels (vision) or `get_record_sources` / `get_active_acoustic_model`.labels (sound) — never indexes. Empty matches any label.
+- `source_filter` holds source ids from `get_record_sources` (`"builtin"`, `"acousticslab"`, app ids). **Empty matches EVERY source** — including acoustic classifications — so `set_detection_rules` defaults omitted filters to `["builtin"]`. Pass an explicit `[]` (or use `set_record_trigger`) only for a genuine all-sources rule.
+- `region_filter` is a list of polygons of normalized `[x, y]` in `[0,1]`; omit/null = full frame. Only sources with `supports_roi` honor it.
+- `confidence_range_filter` is `[min, max]`, both in `[0.0, 1.0]`, `min <= max` (default `[0.25, 1.0]`). `debounce_times` defaults to `3` consecutive matching frames (AcousticsLab hops are ~960 ms apart, so N hops ≈ N seconds).
 
 ### Schedule range
 
@@ -175,15 +176,15 @@ Actions are `FORMAT`, `FREE_UP`, `EJECT`, and `REMOVE_FILES_OR_DIRECTORIES`. `FO
 
 ```json
 {"kind":"inference_set", "rules":[ /* DetectionRule[] */ ]}
+{"kind":"inference_set", "rules":[{"name":"alarm","source_filter":["acousticslab"],"label_filter":["Cat"],"debounce_times":3}]}
 {"kind":"timer", "interval_seconds": 60}
 {"kind":"gpio", "num":1, "state":"PULL_UP", "signal":"FALLING", "debounce_ms":50}
 {"kind":"tty",  "name":"tty0", "command":"SHOOT"}
 {"kind":"http"}
 {"kind":"always_on"}
-{"kind":"sed", "model_id":"", "consecutive_window_ms":0, "confidence_range_filter":[0.5,1.0], "label_filter":["Cat"]}
 ```
 
-`gpio`: one of `name`/`num`; `state` ∈ `DISABLED|FLOATING|PULL_UP|PULL_DOWN`; `signal` ∈ `HIGH|LOW|RISING|FALLING`. `sed`: `model_id` is the acoustic `runtime_head_id` (empty = currently active model); `consecutive_window_ms` ≤ 60000.
+`gpio`: one of `name`/`num`; `state` ∈ `DISABLED|FLOATING|PULL_UP|PULL_DOWN`; `signal` ∈ `HIGH|LOW|RISING|FALLING`. Sound-event recording (formerly `sed`): the second `inference_set` example above; firmware migrates legacy `dSED` sections to this shape at boot (window → debounce hops, ~960 ms each).
 
 ### Detection event
 
@@ -239,4 +240,4 @@ from recamera_intellisense import capture_image, get_storage_status
 image = capture_image(device_name="cam1")
 ```
 
-The public SDK exports the 50 CLI commands listed above (each function's signature is its schema — the CLI derives required/optional arguments and types from it). `relay.py` also has internal helpers used by record browsing; relay lifecycle is managed automatically by `list_records` and `fetch_record`.
+The public SDK exports the 51 CLI commands listed above (each function's signature is its schema — the CLI derives required/optional arguments and types from it). `relay.py` also has internal helpers used by record browsing; relay lifecycle is managed automatically by `list_records` and `fetch_record`.

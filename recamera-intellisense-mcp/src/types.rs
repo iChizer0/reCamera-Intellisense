@@ -200,6 +200,11 @@ pub struct DetectionRule {
     /// Label names to match (empty = any).
     #[serde(default)]
     pub label_filter: Vec<String>,
+    /// Source ids to match, e.g. ["builtin"] (vision) or ["acousticslab"]
+    /// (sound). Empty = match EVERY source. Discover ids and their producible
+    /// labels via `get_record_sources`.
+    #[serde(default)]
+    pub source_filter: Vec<String>,
     /// List of polygons of normalized [x, y] in [0,1]; omit or empty for full frame.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region_filter: Option<Vec<Vec<Vec<f64>>>>,
@@ -302,20 +307,25 @@ pub enum RecordTrigger {
     Http,
     /// Continuous re-arm using writer interval pacing.
     AlwaysOn,
-    /// Sound-event detection trigger.
-    Sed(SedTrigger),
 }
 
+/// A recording-rule source as exposed by the firmware's App Center
+/// (`/api/app-center/v1/recording/sources`).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SedTrigger {
-    /// Acoustic model ID filter. Empty string accepts the currently active model.
-    pub model_id: String,
-    /// Consecutive activity window required to fire, in milliseconds (0..=60000).
-    pub consecutive_window_ms: u64,
-    /// [min, max] confidence in [0.0, 1.0].
-    pub confidence_range_filter: Vec<f64>,
-    /// Class labels to match (empty = any). Use labels from `get_active_acoustic_model`.
-    pub label_filter: Vec<String>,
+pub struct RecordSource {
+    /// Source id usable in a rule's `source_filter` ("builtin", "acousticslab", ...).
+    pub id: String,
+    /// "builtin" | "system" | "app".
+    pub kind: String,
+    pub name: String,
+    pub running: bool,
+    pub frame_capable: bool,
+    pub event_capable: bool,
+    pub supports_roi: bool,
+    /// Labels this source can currently produce. Empty = unknowable (the
+    /// builtin vision source follows the selected model; see
+    /// `get_detection_models_info`).
+    pub classes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

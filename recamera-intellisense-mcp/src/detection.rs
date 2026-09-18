@@ -7,8 +7,8 @@ use crate::api::{daemon as api_daemon, model as api_model, rule as api_rule};
 use crate::api_client::ApiClient;
 use crate::storage;
 use crate::types::{
-    DetectionEvent, DetectionModel, DetectionRule, DeviceRecord, RecordTrigger, RuleConfig,
-    ScheduleRange, WriterConfig,
+    DetectionEvent, DetectionModel, DetectionRule, DeviceRecord, RecordSource, RecordTrigger,
+    RuleConfig, ScheduleRange, WriterConfig,
 };
 
 // MARK: Models
@@ -82,11 +82,17 @@ pub async fn get_detection_rules(
     if !is_record_image_enabled(&cfg) {
         return Ok(vec![]);
     }
-    match api_rule::get_trigger(client, device).await? {
-        RecordTrigger::InferenceSet { rules } => Ok(rules),
-        _ => Ok(vec![]),
-    }
+    // Kind gate on the raw payload: a retired-but-unmigrated SED selection
+    // yields [] instead of an error.
+    let raw = api_rule::get_record_rule_json(client, device).await?;
+    Ok(api_rule::inference_rules_from_raw(&raw))
 }
+
+/// Vision intent assumed when a rule omits `source_filter`: an empty filter
+/// matches EVERY source — including acoustic classifications — which is
+/// almost never what an agent compiling a vision rule wants. Use the raw
+/// `set_record_trigger` for an explicit all-sources rule.
+const DEFAULT_VISION_SOURCE: &str = "builtin";
 
 pub async fn set_detection_rules(
     client: &ApiClient,
@@ -96,12 +102,79 @@ pub async fn set_detection_rules(
     for (idx, rule) in rules.iter().enumerate() {
         validate_confidence_range(idx, &rule.confidence_range_filter)?;
     }
+    let mut prepared: Vec<DetectionRule> = rules.to_vec();
+    for rule in prepared.iter_mut() {
+        if rule.source_filter.is_empty() {
+            rule.source_filter = vec![DEFAULT_VISION_SOURCE.to_string()];
+        }
+    }
+    if !prepared.is_empty() {
+        let sources = api_rule::get_record_sources(client, device).await?;
+        validate_rules_against_sources(&prepared, &sources)?;
+    }
     ensure_record_image(client, device).await?;
     storage::ensure_storage(client, device).await?;
-    let trigger = RecordTrigger::InferenceSet {
-        rules: rules.to_vec(),
-    };
+    let trigger = RecordTrigger::InferenceSet { rules: prepared };
     api_rule::set_trigger(client, device, &trigger).await
+}
+
+/// Compile-time check: unknown source ids and unproducible labels fail loudly
+/// instead of writing a rule that can never fire. A selected source whose
+/// class set is unknowable (the builtin vision source follows the selected
+/// model) disables the label check — never cry wolf.
+fn validate_rules_against_sources(rules: &[DetectionRule], sources: &[RecordSource]) -> Result<()> {
+    for rule in rules {
+        let mut picked: Vec<&RecordSource> = Vec::new();
+        for sid in &rule.source_filter {
+            match sources.iter().find(|s| &s.id == sid) {
+                Some(s) => picked.push(s),
+                None => bail!(
+                    "rule {:?}: unknown source_filter id {:?}; available: {:?}",
+                    rule.name,
+                    sid,
+                    sources.iter().map(|s| s.id.as_str()).collect::<Vec<_>>()
+                ),
+            }
+        }
+        if rule.label_filter.is_empty() {
+            continue;
+        }
+        if picked.iter().any(|s| s.kind == "builtin") {
+            continue; // builtin classes follow the active vision model: unknowable
+        }
+        let producible: std::collections::HashSet<&str> = picked
+            .iter()
+            .flat_map(|s| s.classes.iter().map(|c| c.as_str()))
+            .collect();
+        let bad: Vec<&str> = rule
+            .label_filter
+            .iter()
+            .map(|l| l.as_str())
+            .filter(|l| !producible.contains(l))
+            .collect();
+        if !bad.is_empty() {
+            let states = picked
+                .iter()
+                .map(|s| {
+                    format!(
+                        "{}({}, {} classes)",
+                        s.id,
+                        if s.running { "running" } else { "STOPPED" },
+                        s.classes.len()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "rule {:?}: label(s) {:?} cannot be produced by the selected source(s) [{}]; \
+                 check get_record_sources and the AcousticsLab/App Center state first",
+                rule.name,
+                bad,
+                states
+            );
+        }
+    }
+    Ok(())
 }
 
 fn validate_confidence_range(idx: usize, range: &[f64]) -> Result<()> {
