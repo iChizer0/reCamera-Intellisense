@@ -164,6 +164,20 @@ EXAMPLES: Dict[str, str] = {
     "get_video_encode": "recamera get_video_encode device_name=cam1 stream=sub",
     "get_battery_status": "recamera get_battery_status device_name=cam1",
     "export_device_config": "recamera export_device_config device_name=cam1 output=./cam1-config.tar",
+    "set_notify_config": (
+        "recamera set_notify_config device_name=cam1 mode=1 "
+        "'mqtt={\"url\":\"mqtt://broker.local\",\"port\":1883,\"topic\":\"cam/events\"}'"
+    ),
+    "start_app": "recamera start_app device_name=cam1 app_id=my-app",
+    "stop_app": "recamera stop_app device_name=cam1 app_id=my-app",
+    "restart_app": "recamera restart_app device_name=cam1 app_id=my-app",
+    "set_acoustic_model": (
+        "recamera set_acoustic_model device_name=cam1 "
+        "workspace_id=<workspace-uuid> head_id=<head-uuid>"
+    ),
+    "set_video_encode": (
+        "recamera set_video_encode device_name=cam1 stream=sub codec=H.265 max_rate=1024"
+    ),
     "set_record_trigger": (
         "recamera set_record_trigger device_name=cam1 "
         "'trigger={\"kind\":\"timer\",\"interval_seconds\":60}'"

@@ -64,6 +64,9 @@ PYTHONPATH="./scripts" python3 -m recamera_intellisense
 | `clear_detection_events` | `device_name` | — |
 | `get_active_acoustic_model` | `device_name` | — |
 | `list_acoustic_models` | `device_name` | — |
+| `set_acoustic_model` | `device_name` | `workspace_id`, `head_id`, `default` |
+
+`set_acoustic_model` switches the live inference head (ids from `list_acoustic_models`; unknown ids fail loudly listing the available ones) or restores the factory head with `default=true`. Requires the AcousticsLab app running (`start_app`).
 
 Detection labels are names returned by the selected model, not numeric indexes. A schedule is a list such as:
 
@@ -107,24 +110,34 @@ Examples:
 |---|---|---|
 | `list_apps` | `device_name` | — |
 | `get_app_logs` | `device_name`, `app_id` | `tail` |
+| `start_app` / `restart_app` | `device_name`, `app_id` | `confirm` |
+| `stop_app` | `device_name`, `app_id` | `confirm` |
 
-`list_apps` returns installed apps plus firmware system apps (`builtin`, `acousticslab`) with `status`, `version`, and `system` flag. A stopped app produces no frames for recording rules (see `get_record_sources`). `get_app_logs` tails the app's log (clamped to [1, 2000], spans rotation). App lifecycle (start/stop/restart) is not exposed by these commands; manage it from the App Center web UI. Building new apps: use the [recamera-pysdk](https://github.com/Seeed-Studio/recamera-pro-ext-api/tree/main/skill/recamera-pysdk) skill.
+`list_apps` returns installed apps plus firmware system apps (`builtin`, `acousticslab`) with `status`, `version`, and `system` flag. A stopped app produces no frames for recording rules (see `get_record_sources`). `get_app_logs` tails the app's log (clamped to [1, 2000], spans rotation).
+
+Lifecycle: `start_app`/`stop_app`/`restart_app` queue the action (HTTP 202 — poll `list_apps` for the new status). Stopping or restarting a SYSTEM app interrupts a firmware-managed result source (recording rules fed by it go silent), so those calls require `confirm=true`. Building new apps: use the [recamera-pysdk](https://github.com/Seeed-Studio/recamera-pro-ext-api/tree/main/skill/recamera-pysdk) skill.
 
 ## Video encode
 
 | Command | Required keys | Optional keys |
 |---|---|---|
 | `get_video_encode` | `device_name` | `stream` |
+| `set_video_encode` | `device_name` | `stream`, `codec`, `resolution`, `frame_rate`, `gop`, `rc_mode`, `rc_quality`, `max_rate`, `enabled` |
 
 `stream` is `main` (default) or `sub`. Returns `{stream, stream_type, enabled, codec, resolution, frame_rate, gop, rc_mode, rc_quality, max_rate}` (max_rate in kbps).
+
+`set_video_encode` changes only the passed fields (`codec`: H.264/H.265; `resolution`: WxH within 384*384~3840*2160; `frame_rate`/`gop`: 1~120; `rc_mode`: CBR/VBR; `rc_quality`: highest/high/medium/low; `max_rate`: 3~65536 kbps; `enabled`), then re-reads the device and fails loudly if a value did not apply. Applying briefly re-inits the encoder.
 
 ## Result push (notify)
 
 | Command | Required keys | Optional keys |
 |---|---|---|
 | `get_notify_config` | `device_name` | — |
+| `set_notify_config` | `device_name` | `mode`, `mqtt`, `http`, `templates` |
 
 Returns `{mode, mode_name, mqtt, http, uart, templates}` — the shared pipeline that fans results (built-in vision AND AcousticsLab classifications) out to MQTT / HTTP / UART. `mode`: 0=off, 1=MQTT, 2=HTTP, 3=UART. **`password`/`token` are redacted as `"***"`** — the device returns them in cleartext and they must not enter agent contexts. `templates` are the shared per-task payload templates; empty = built-in default.
+
+`set_notify_config` takes `mode` (0-3), `mqtt` `{url, port, client_id, username, password, topic}`, `http` `{url, token}`, `templates` `{classification, detection, keypoint, segmentation, tracking}`. **Only the passed fields change** — omitted fields keep their stored values, so secrets survive a redacted read followed by a write (passing the literal `"***"` placeholder is rejected; pass `""` to clear a secret). NOTE: applying restarts the notify service and recameraipc — a brief pipeline gap.
 
 ## Capture
 
@@ -268,4 +281,4 @@ from recamera_intellisense import capture_image, get_storage_status
 image = capture_image(device_name="cam1")
 ```
 
-The public SDK exports the 58 CLI commands listed above (each function's signature is its schema — the CLI derives required/optional arguments and types from it). `relay.py` also has internal helpers used by record browsing; relay lifecycle is managed automatically by `list_records` and `fetch_record`.
+The public SDK exports the 64 CLI commands listed above (each function's signature is its schema — the CLI derives required/optional arguments and types from it). `relay.py` also has internal helpers used by record browsing; relay lifecycle is managed automatically by `list_records` and `fetch_record`.

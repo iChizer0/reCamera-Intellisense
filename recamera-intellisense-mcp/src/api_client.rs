@@ -51,7 +51,9 @@ impl ApiClient {
         if token.is_empty() {
             req
         } else {
-            req.header("Authorization", token)
+            // Explicit Bearer: CGI strips the prefix; appmgr's mutation
+            // origin guard requires it for origin-less POSTs.
+            req.header("Authorization", format!("Bearer {token}"))
         }
     }
 

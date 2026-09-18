@@ -63,7 +63,9 @@ def api_url(
 def _auth_headers(device: DeviceRecord) -> dict[str, str]:
     token = device.get("token", "")
     if token:
-        return {"Authorization": token}
+        # Explicit Bearer: CGI strips the prefix; appmgr's mutation origin
+        # guard requires it for origin-less POSTs.
+        return {"Authorization": f"Bearer {token}"}
     return {}
 
 

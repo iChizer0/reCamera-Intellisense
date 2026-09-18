@@ -3,7 +3,7 @@
 use anyhow::{bail, Result};
 
 use crate::api_client::ApiClient;
-use crate::types::{AppEntry, AppLogs, DeviceRecord};
+use crate::types::{AppActionResult, AppEntry, AppLogs, DeviceRecord};
 
 const PATH_APPS: &str = "/api/app-center/v1/apps";
 const MAX_LOG_TAIL: i64 = 2000;
@@ -96,4 +96,43 @@ mod tests {
         }
         assert!(require_app_id(&"x".repeat(65)).is_err());
     }
+}
+
+/// Start/stop/restart an app (202 queued). Stopping or restarting a SYSTEM
+/// app requires `confirm`: it interrupts a firmware-managed result source.
+pub async fn app_action(
+    client: &ApiClient,
+    device: &DeviceRecord,
+    app_id: &str,
+    action: &str,
+    confirm: bool,
+) -> Result<AppActionResult> {
+    require_app_id(app_id)?;
+    let apps = list_apps(client, device).await?;
+    let app = apps.iter().find(|a| a.id == app_id).ok_or_else(|| {
+        let ids: Vec<&str> = apps.iter().map(|a| a.id.as_str()).collect();
+        anyhow::anyhow!("unknown app {app_id:?}; installed: {ids:?}")
+    })?;
+    if action != "start" && app.system && !confirm {
+        bail!(
+            "{action} on system app {app_id:?} interrupts a firmware-managed result \
+             source (recording rules fed by it go silent) — re-run with confirm=true"
+        );
+    }
+    // v1 endpoints return plain JSON (no {code:0} envelope): HTTP status
+    // is the error signal, already enforced by post_json.
+    client
+        .post_json(
+            device,
+            &format!("{PATH_APPS}/{app_id}/{action}"),
+            None,
+            Some(&serde_json::json!({})),
+        )
+        .await?;
+    Ok(AppActionResult {
+        changed: true,
+        id: app_id.to_string(),
+        action: action.to_string(),
+        queued: true,
+    })
 }

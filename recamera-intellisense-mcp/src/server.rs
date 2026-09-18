@@ -754,6 +754,109 @@ impl ReCameraServer {
     }
 
     #[tool(
+        description = "Start an app (202 queued; poll list_apps for status).",
+        annotations(read_only_hint = false, destructive_hint = false, open_world_hint = true)
+    )]
+    async fn start_app(
+        &self,
+        Parameters(params): Parameters<AppActionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let result = try_tool!(
+            api_apps::app_action(&self.client, &device, &params.app_id, "start", false).await
+        );
+        Ok(try_tool!(json_result(&result)))
+    }
+
+    #[tool(
+        description = "Stop an app (202 queued). Stopping a SYSTEM app (builtin/acousticslab) requires confirm=true: recording rules fed by it go silent.",
+        annotations(read_only_hint = false, destructive_hint = false, open_world_hint = true)
+    )]
+    async fn stop_app(
+        &self,
+        Parameters(params): Parameters<AppActionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let result = try_tool!(
+            api_apps::app_action(
+                &self.client, &device, &params.app_id, "stop",
+                params.confirm.unwrap_or(false),
+            )
+            .await
+        );
+        Ok(try_tool!(json_result(&result)))
+    }
+
+    #[tool(
+        description = "Restart an app (202 queued). Restarting a SYSTEM app (builtin/acousticslab) requires confirm=true.",
+        annotations(read_only_hint = false, destructive_hint = false, open_world_hint = true)
+    )]
+    async fn restart_app(
+        &self,
+        Parameters(params): Parameters<AppActionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let result = try_tool!(
+            api_apps::app_action(
+                &self.client, &device, &params.app_id, "restart",
+                params.confirm.unwrap_or(false),
+            )
+            .await
+        );
+        Ok(try_tool!(json_result(&result)))
+    }
+
+    #[tool(
+        description = "Update the result-push config (mode 0=off/1=MQTT/2=HTTP/3=UART, mqtt/http channel fields, payload templates). Omitted fields keep stored values — secrets survive a redacted read/write cycle. The device restarts its notify service and recameraipc to apply (brief pipeline gap).",
+        annotations(read_only_hint = false, destructive_hint = false, open_world_hint = true)
+    )]
+    async fn set_notify_config(
+        &self,
+        Parameters(params): Parameters<SetNotifyConfigParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let result =
+            try_tool!(api_notify::set_notify_config(&self.client, &device, &params).await);
+        Ok(try_tool!(json_result(&result)))
+    }
+
+    #[tool(
+        description = "Switch the live AcousticsLab inference head (workspace_id + head_id from list_acoustic_models) or restore the factory head with default=true.",
+        annotations(read_only_hint = false, destructive_hint = false, open_world_hint = true)
+    )]
+    async fn set_acoustic_model(
+        &self,
+        Parameters(params): Parameters<SetAcousticModelParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let result = try_tool!(
+            api_acoustic::set_acoustic_model(
+                &self.client,
+                &device,
+                params.workspace_id.as_deref(),
+                params.head_id.as_deref(),
+                params.default.unwrap_or(false),
+            )
+            .await
+        );
+        Ok(try_tool!(json_result(&result)))
+    }
+
+    #[tool(
+        description = "Update video encode parameters for main|sub (codec H.264/H.265, resolution WxH, frame_rate, gop, rc_mode CBR/VBR, rc_quality, max_rate kbps, enabled). Only passed fields change; verified by re-reading. Applying briefly re-inits the encoder.",
+        annotations(read_only_hint = false, destructive_hint = false, open_world_hint = true)
+    )]
+    async fn set_video_encode(
+        &self,
+        Parameters(params): Parameters<SetVideoEncodeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let result =
+            try_tool!(api_video::set_video_encode(&self.client, &device, &params).await);
+        Ok(try_tool!(json_result(&result)))
+    }
+
+    #[tool(
         description = "List all trained AcousticsLab heads across workspaces; the active one is marked. Empty when the AcousticsLab app is stopped.",
         annotations(read_only_hint = true, open_world_hint = true)
     )]

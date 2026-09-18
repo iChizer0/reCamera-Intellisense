@@ -718,6 +718,128 @@ pub struct ExportDeviceConfigParams {
     pub output: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct AppActionParams {
+    pub device_name: String,
+    /// App id from `list_apps`.
+    pub app_id: String,
+    /// Required (true) to stop/restart a SYSTEM app: that interrupts a
+    /// firmware-managed result source. Ignored for start and user apps.
+    pub confirm: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetNotifyConfigParams {
+    pub device_name: String,
+    /// 0=off, 1=MQTT, 2=HTTP, 3=UART.
+    pub mode: Option<i64>,
+    pub mqtt: Option<MqttChannelPatch>,
+    pub http: Option<HttpChannelPatch>,
+    pub templates: Option<NotifyTemplatesPatch>,
+}
+
+/// Only the fields set here are changed; the rest keep their stored values.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MqttChannelPatch {
+    pub url: Option<String>,
+    /// 1~65535.
+    pub port: Option<i64>,
+    pub client_id: Option<String>,
+    pub username: Option<String>,
+    /// Real secret, "" to clear, omitted to keep the stored one; the
+    /// redaction placeholder "***" is rejected.
+    pub password: Option<String>,
+    pub topic: Option<String>,
+}
+
+/// Only the fields set here are changed; the rest keep their stored values.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct HttpChannelPatch {
+    pub url: Option<String>,
+    /// Real token, "" to clear, omitted to keep the stored one.
+    pub token: Option<String>,
+}
+
+/// Empty string restores the built-in default template of the task type.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct NotifyTemplatesPatch {
+    pub classification: Option<String>,
+    pub detection: Option<String>,
+    pub keypoint: Option<String>,
+    pub segmentation: Option<String>,
+    pub tracking: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NotifySetResult {
+    pub changed: bool,
+    pub mode: i64,
+    pub mode_name: String,
+    /// Applying restarts the notify service and recameraipc (brief gap).
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AppActionResult {
+    pub changed: bool,
+    pub id: String,
+    pub action: String,
+    /// Lifecycle jobs are queued (HTTP 202); poll `list_apps` for status.
+    #[serde(rename = "async")]
+    pub queued: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetAcousticModelParams {
+    pub device_name: String,
+    /// Workspace + head from `list_acoustic_models`; both required unless
+    /// `default` is true.
+    pub workspace_id: Option<String>,
+    pub head_id: Option<String>,
+    /// Restore the factory default head.
+    pub default: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AcousticModelSetResult {
+    pub changed: bool,
+    pub default: bool,
+    pub workspace_id: Option<String>,
+    pub head_id: Option<String>,
+}
+
+/// Only the fields set here are changed; the write is verified by
+/// re-reading the device. Applying briefly re-inits the encoder.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetVideoEncodeParams {
+    pub device_name: String,
+    /// "main" (default) or "sub".
+    pub stream: Option<String>,
+    /// H.264 | H.265.
+    pub codec: Option<String>,
+    /// "WxH" within 384*384 ~ 3840*2160.
+    pub resolution: Option<String>,
+    /// 1~120 fps.
+    pub frame_rate: Option<i64>,
+    /// 1~120.
+    pub gop: Option<i64>,
+    /// CBR | VBR.
+    pub rc_mode: Option<String>,
+    /// highest | high | medium | low.
+    pub rc_quality: Option<String>,
+    /// 3~65536 kbps.
+    pub max_rate: Option<i64>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct VideoEncodeSetResult {
+    pub changed: bool,
+    pub stream: String,
+    /// Friendly field -> value verified on the device after the write.
+    pub applied: serde_json::Value,
+}
+
 // MARK: MCP params - rule system
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

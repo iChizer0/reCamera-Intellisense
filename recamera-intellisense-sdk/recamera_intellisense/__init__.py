@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from ._errors import RecameraError
-from .acoustic import get_active_acoustic_model, list_acoustic_models
-from .apps import get_app_logs, list_apps
+from .acoustic import (get_active_acoustic_model, list_acoustic_models,
+                       set_acoustic_model)
+from .apps import (get_app_logs, list_apps, restart_app, start_app,
+                    stop_app)
 from .backup import export_device_config
 from .capture import capture_image, get_capture_status, start_capture, stop_capture
-from .notify import get_notify_config
-from .video import get_video_encode
+from .notify import get_notify_config, set_notify_config
+from .video import get_video_encode, set_video_encode
 from .detection import (
     clear_detection_events,
     get_detection_events,
@@ -107,11 +109,17 @@ __all__ = [
     # acoustic
     "get_active_acoustic_model",
     "list_acoustic_models",
+    "set_acoustic_model",
     # app center / video / notify / backup
     "list_apps",
+    "start_app",
+    "stop_app",
+    "restart_app",
     "get_app_logs",
     "get_video_encode",
+    "set_video_encode",
     "get_notify_config",
+    "set_notify_config",
     "export_device_config",
     # model / detection
     "get_detection_models_info",

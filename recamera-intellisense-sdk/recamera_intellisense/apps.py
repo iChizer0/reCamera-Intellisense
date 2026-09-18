@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from . import _config, _http
 from ._errors import RecameraError
 
-__all__ = ["list_apps", "get_app_logs"]
+__all__ = ["list_apps", "get_app_logs", "start_app", "stop_app", "restart_app"]
 
 PATH_APPS = "/api/app-center/v1/apps"
 
@@ -93,3 +93,46 @@ def get_app_logs(
 
 
 COMMANDS = {"list_apps": list_apps, "get_app_logs": get_app_logs}
+
+
+def _lifecycle(app_id: Any, action: str, device_name: Optional[str] = None,
+               *, confirm: bool = False) -> Dict[str, Any]:
+    app_id = _require_app_id(app_id)
+    apps = list_apps(device_name)
+    app = next((a for a in apps if a["id"] == app_id), None)
+    if app is None:
+        raise ValueError(
+            f"unknown app {app_id!r}; installed: {[a['id'] for a in apps]}")
+    if action != "start" and app.get("system") and not confirm:
+        raise ValueError(
+            f"{action} on system app {app_id!r} interrupts a firmware-managed "
+            "result source (recording rules fed by it go silent) — re-run "
+            "with confirm=true")
+    # Plain JSON response (no envelope): HTTP status is the error signal.
+    dev = _config.resolve(device_name)
+    _http.post_json(dev, f"{PATH_APPS}/{app_id}/{action}", payload={})
+    return {"changed": True, "id": app_id, "action": action, "async": True}
+
+
+def start_app(app_id: str, device_name: Optional[str] = None) -> Dict[str, Any]:
+    """Start an app (202 queued; poll `list_apps` for status ``running``)."""
+    return _lifecycle(app_id, "start", device_name)
+
+
+def stop_app(app_id: str, device_name: Optional[str] = None, *,
+             confirm: bool = False) -> Dict[str, Any]:
+    """Stop an app. Stopping a SYSTEM app requires ``confirm=true``."""
+    return _lifecycle(app_id, "stop", device_name, confirm=confirm)
+
+
+def restart_app(app_id: str, device_name: Optional[str] = None, *,
+                confirm: bool = False) -> Dict[str, Any]:
+    """Restart an app. Restarting a SYSTEM app requires ``confirm=true``."""
+    return _lifecycle(app_id, "restart", device_name, confirm=confirm)
+
+
+COMMANDS.update({
+    "start_app": start_app,
+    "stop_app": stop_app,
+    "restart_app": restart_app,
+})

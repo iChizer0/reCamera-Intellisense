@@ -70,7 +70,8 @@ Full catalogue, per-command arguments, and key schemas: **[REFERENCE.md](REFEREN
 - **Image (ISP)**: `get_image_settings` (full config: video adjustment, night-to-day, 3 scene profiles), `set_image_settings section=… scene_id=… 'values={…}'` — sections: `video_adjustment`, `night_to_day`, `adjustment`, `exposure`, `backlight`, `white_balance`, `enhancement`; read-modify-write with validation (incl. BLC/HDR/HLC mutual exclusion).
 - **Detection**: `get_detection_models_info`, `get/set_detection_model` (by `model_id` or `model_name`), `get/set_detection_schedule`, `get/set_detection_rules`, `get_detection_events` (`start_unix_ms`/`end_unix_ms`), `clear_detection_events`. Facade: `set_detection_rules` installs the `inference_set` trigger and ensures writer + storage by default; `get_detection_rules` returns `[]` when the active trigger is not `inference_set`.
 - **Acoustic**: `get_active_acoustic_model` → labels of the active sound model (null when the AcousticsLab app is stopped — start it in the App Center); `list_acoustic_models` → all trained heads across workspaces (active marked).
-- **App Center**: `list_apps` (status/version/system flag; a stopped app produces no recording frames), `get_app_logs app_id=… tail=…`.
+- **App Center**: `list_apps` (status/version/system flag; a stopped app produces no recording frames), `get_app_logs app_id=… tail=…`. Lifecycle: `start_app`/`stop_app`/`restart_app` (202 queued; system-app stop/restart needs `confirm=true`).
+- **Writes that matter**: `set_notify_config` keeps stored secrets for omitted fields (never echo the `***` placeholder back) and restarts the result pipeline on apply; `set_acoustic_model` switches the live acoustic head; `set_video_encode` re-reads the device to verify the applied values.
 - **Video**: `get_video_encode stream=main|sub` → codec/resolution/fps/GOP/RC/bitrate.
 - **Result push**: `get_notify_config` → MQTT/HTTP/UART channels + shared payload templates (secrets redacted).
 - **Rule system**: `get_rule_system_info`, `get_record_sources` (discover source ids + producible classes BEFORE compiling rules), `get/set_record_config`, `get/set_schedule_rule`, `get/set_record_trigger`, `activate_http_trigger`. Trigger kinds: `inference_set`, `timer`, `gpio`, `tty`, `http`, `always_on` — only one is active at a time. The legacy `sed` kind is **retired**: sound-event recording is an `inference_set` rule with `source_filter=["acousticslab"]`; firmware auto-migrates old `sed` configs at boot.
@@ -138,7 +139,7 @@ This skill **orchestrates existing device capabilities** (compile intents into p
 
 - **Custom app / model pipeline / result post-processing** → use the [recamera-pysdk](https://github.com/Seeed-Studio/recamera-pro-ext-api/tree/main/skill/recamera-pysdk) skill to assess, build, package, and debug a reCamera Pro App for the App Center.
 - **Custom sound classes** → train/activate a head in the AcousticsLab console (`/extension/acousticslab`); this skill consumes its labels read-only.
-- **App lifecycle / output (MQTT/HTTP/UART) config** → the device App Center web UI (or `recamera-pysdk` for app-level debugging).
+- **Building NEW apps / model pipelines / result post-processing** → `recamera-pysdk`; heavy flows (app upload/install, model files, factory reset) stay in the device web UI.
 
 If neither covers the request, say so plainly instead of inventing capabilities.
 

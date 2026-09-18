@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use crate::api_client::ApiClient;
-use crate::types::{AcousticModel, DeviceRecord};
+use crate::types::{AcousticModel, AcousticModelSetResult, DeviceRecord};
 
 const PATH_ACTIVE: &str = "/extension/acousticslab/api/v1/active";
 const PATH_WORKSPACES: &str = "/extension/acousticslab/api/v1/workspaces";
@@ -113,4 +113,66 @@ pub async fn list_acoustic_models(
         }
     }
     Ok(out)
+}
+
+/// Switch the live acoustic inference head (`{workspace_id, head_id}`), or
+/// restore the factory head (`default`). Ids come from `list_acoustic_models`.
+pub async fn set_acoustic_model(
+    client: &ApiClient,
+    device: &DeviceRecord,
+    workspace_id: Option<&str>,
+    head_id: Option<&str>,
+    default: bool,
+) -> Result<AcousticModelSetResult> {
+    let payload = if default {
+        if workspace_id.is_some() || head_id.is_some() {
+            bail!("default=true cannot be combined with workspace_id/head_id");
+        }
+        serde_json::json!({"default": true})
+    } else {
+        let (ws_id, head_id) = match (workspace_id, head_id) {
+            (Some(w), Some(h)) => (w, h),
+            _ => bail!(
+                "workspace_id and head_id are required (or default=true); \
+                 see list_acoustic_models"
+            ),
+        };
+        let ws = client.get_json(device, PATH_WORKSPACES, None).await.map_err(|e| {
+            anyhow::anyhow!(
+                "AcousticsLab console unreachable — is the app running? (start_app 'acousticslab'); {e}"
+            )
+        })?;
+        let ws_ids: Vec<&str> = ws
+            .get("workspaces")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|w| w.get("id").and_then(|v| v.as_str())).collect())
+            .unwrap_or_default();
+        if !ws_ids.contains(&ws_id) {
+            bail!("unknown workspace_id {ws_id:?}; available: {ws_ids:?}");
+        }
+        let heads = client
+            .get_json(device, &format!("{PATH_WORKSPACES}/{ws_id}/heads"), None)
+            .await?;
+        let head_ids: Vec<&str> = heads
+            .get("heads")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|h| h.get("head_id").and_then(|v| v.as_str())).collect())
+            .unwrap_or_default();
+        if !head_ids.contains(&head_id) {
+            bail!("unknown head_id {head_id:?} in workspace {ws_id}; available: {head_ids:?}");
+        }
+        serde_json::json!({"workspace_id": ws_id, "head_id": head_id})
+    };
+    // Plain JSON response (no envelope): HTTP status is the error signal.
+    client.post_json(device, PATH_ACTIVE, None, Some(&payload)).await.map_err(|e| {
+        anyhow::anyhow!(
+            "set acoustic model failed (is the AcousticsLab app running?); {e}"
+        )
+    })?;
+    Ok(AcousticModelSetResult {
+        changed: true,
+        default,
+        workspace_id: workspace_id.map(str::to_string),
+        head_id: head_id.map(str::to_string),
+    })
 }

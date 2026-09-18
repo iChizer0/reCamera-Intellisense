@@ -16,7 +16,8 @@ from typing import Any, Dict, List, Optional
 from . import _config, _http
 from ._errors import RecameraError
 
-__all__ = ["get_active_acoustic_model", "list_acoustic_models"]
+__all__ = ["get_active_acoustic_model", "list_acoustic_models",
+           "set_acoustic_model"]
 
 PATH_ACTIVE = "/extension/acousticslab/api/v1/active"
 PATH_WORKSPACES = "/extension/acousticslab/api/v1/workspaces"
@@ -89,3 +90,53 @@ def list_acoustic_models(device_name: Optional[str] = None) -> List[Dict[str, An
 
 COMMANDS = {"get_active_acoustic_model": get_active_acoustic_model,
             "list_acoustic_models": list_acoustic_models}
+
+
+def set_acoustic_model(
+    device_name: Optional[str] = None,
+    *,
+    workspace_id: Optional[str] = None,
+    head_id: Optional[str] = None,
+    default: bool = False,
+) -> Dict[str, Any]:
+    """Switch the live acoustic inference head (ids from
+    ``list_acoustic_models``); ``default=true`` restores the factory head.
+    Requires the AcousticsLab app running — start it first otherwise.
+    """
+    dev = _config.resolve(device_name)
+    if default:
+        if workspace_id or head_id:
+            raise ValueError(
+                "default=true cannot be combined with workspace_id/head_id")
+        payload: Dict[str, Any] = {"default": True}
+    else:
+        if not workspace_id or not head_id:
+            raise ValueError(
+                "workspace_id and head_id are required (or default=true); "
+                "see list_acoustic_models")
+        try:
+            ws_data = _http.get_json(dev, PATH_WORKSPACES)
+        except RecameraError as exc:
+            raise RecameraError(
+                "AcousticsLab console unreachable — is the app running? "
+                "(start_app 'acousticslab'); " + str(exc)) from exc
+        workspaces = (ws_data or {}).get("workspaces") or []
+        ws_ids = [w.get("id") for w in workspaces]
+        if workspace_id not in ws_ids:
+            raise ValueError(
+                f"unknown workspace_id {workspace_id!r}; available: {ws_ids}")
+        heads_data = _http.get_json(dev, PATH_HEADS.format(workspace_id))
+        heads = (heads_data or {}).get("heads") or []
+        head_ids = [h.get("head_id") for h in heads]
+        if head_id not in head_ids:
+            raise ValueError(
+                f"unknown head_id {head_id!r} in workspace {workspace_id}; "
+                f"available: {head_ids}")
+        payload = {"workspace_id": workspace_id, "head_id": head_id}
+    # Plain JSON response (no envelope): HTTP status is the error signal.
+    _http.post_json(dev, PATH_ACTIVE, payload=payload)
+    return {"changed": True, "default": bool(default),
+            "workspace_id": workspace_id, "head_id": head_id}
+
+
+COMMANDS["set_acoustic_model"] = set_acoustic_model
