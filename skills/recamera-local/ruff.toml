@@ -1,0 +1,20 @@
+# Lint policy: aligned with the repository's fleet SDK pyproject.toml.
+# Substance over style: typing.Dict/List/Optional stay (py3.9 idiom used
+# consistently — the CLI evaluates annotations at runtime via get_type_hints,
+# so PEP 604 unions would break on the device's older Python); the per-module
+# direct-exec shim intentionally precedes imports; complexity/dispatch density
+# is by design.
+target-version = "py39"
+line-length = 100
+
+[lint]
+select = ["F", "E", "W", "B", "SIM", "RET", "PIE", "RUF", "C4", "PERF", "I"]
+ignore = [
+    "E501",     # line length enforced via review (100)
+    "B004",     # getattr(fn, '__call__') needs the bound attr, not callable()
+    "RUF022",   # __all__ grouped by domain, not alphabetised
+    "PERF203",  # try/except in loops is clearer than restructuring
+    "SIM105",   # try/except-pass reads fine here
+    "SIM117",   # nested `with` is clearer than mega-with
+    "RUF059",   # intentional unused unpacks in tests
+]

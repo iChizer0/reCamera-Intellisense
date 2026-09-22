@@ -6,3 +6,5 @@
 __pycache__
 
 skills/recamera-intellisense/scripts/**
+
+.ruff_cache
