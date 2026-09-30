@@ -131,10 +131,14 @@ class SetImageSettingsTests(unittest.TestCase):
             image.set_image_settings("cam1", section="adjustment", values={"nope": 1}, scene_id=0)
 
     def test_scene_id_rules(self) -> None:
-        with self.assertRaises(ValueError):
-            image.set_image_settings("cam1", section="adjustment", values={"brightness": 50})
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError):  # scene_id on a non-profile section
             image.set_image_settings("cam1", section="video_adjustment", values={"rotation": 0}, scene_id=1)
+        with self.assertRaises(ValueError):  # scene out of range
+            image.set_image_settings("cam1", section="adjustment", values={"brightness": 50}, scene_id=3)
+
+    def test_profile_section_defaults_to_active_profile(self) -> None:
+        path, _ = _run_set("adjustment", {"brightness": 70})  # IMAGE_CONFIG iProfileCur=1
+        self.assertEqual(path, "/cgi-bin/entry.cgi/image/0/1/adjustment")
 
     def test_range_enum_and_fraction_validation(self) -> None:
         with self.assertRaises(ValueError):  # out of range

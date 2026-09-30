@@ -20,12 +20,13 @@ import re
 from typing import Any, Dict, Optional
 
 from . import _config, _http
+from ._errors import RecameraError
 
 __all__ = ["get_image_settings", "set_image_settings"]
 
 PATH_IMAGE = "/cgi-bin/entry.cgi/image/0"
 
-_SCENES = (0, 1, 2)  # 0=general, 1=day, 2=night
+_SCENES = (0, 1, 2)  # GET /image/0 carries 3 profiles; the live one is nightToDay.iProfileCur
 _OPEN_CLOSE = frozenset({"open", "close"})
 _FRACTION_RE = re.compile(r"^[1-9]\d*/[1-9]\d*$")
 
@@ -76,7 +77,7 @@ _SECTIONS: Dict[str, _Section] = {
         "exposure_mode": _Field("sExposureMode", enum={"auto", "manual"}),
         "gain_mode": _Field("sGainMode", enum={"auto", "manual"}),
         "exposure_time": _Field("sExposureTime", fraction=True),
-        "exposure_gain": _Field("iExposureGain", bounds=(0, 100)),
+        "exposure_gain": _Field("iExposureGain", bounds=(1, 128)),
     }),
     "backlight": _Section("BLC", "/cgi-bin/entry.cgi/image/0/{scene}/blc", {
         "blc_region": _Field("sBLCRegion", enum=_OPEN_CLOSE),
@@ -172,25 +173,49 @@ def _check_section_rules(section: str, merged: Dict[str, Any]) -> None:
             )
 
 
+def _section_state(spec: _Section, config: Dict[str, Any], scene_id: Optional[int]) -> Dict[str, Any]:
+    if spec.profile:
+        profiles = config.get("profile") or []
+        entry = profiles[scene_id] if scene_id is not None and scene_id < len(profiles) else None
+        raw = (entry or {}).get(spec.device_key) or {}
+    else:
+        raw = config.get(spec.device_key) or {}
+    return _normalize_section(spec, raw)
+
+
+def _active_scene(config: Dict[str, Any]) -> int:
+    cur = (config.get("nightToDay") or {}).get("iProfileCur")
+    if cur not in _SCENES:
+        raise RecameraError(
+            "device did not report an active image profile (iProfileCur)",
+            detail={"nightToDay": config.get("nightToDay")},
+        )
+    return int(cur)
+
+
 def set_image_settings(
     device_name: Optional[str] = None,
     *,
     section: str,
     values: Dict[str, Any],
     scene_id: Optional[int] = None,
-) -> None:
-    """Merge *values* into one ISP section (read-modify-write), then PUT it.
+) -> Dict[str, Any]:
+    """Merge *values* into one ISP section, PUT it, return the re-read state.
 
     `section` is one of: video_adjustment, night_to_day, adjustment, exposure,
-    backlight, white_balance, enhancement. Profile sections require
-    `scene_id` 0/1/2. See get_image_settings for current values and shapes.
+    backlight, white_balance, enhancement. Profile sections default `scene_id`
+    to the profile the camera is currently using (night_to_day.profile_current),
+    so writes take visible effect immediately; pass 0/1/2 explicitly to
+    pre-configure an inactive profile. Returns `{section, changed, state}`
+    (plus `scene_id` for profile sections) where `state` is the section
+    re-read after the write — proof the device accepted it.
     """
     spec = _SECTIONS.get(section)
     if spec is None:
         raise ValueError(f"unknown section {section!r}; expected one of {sorted(_SECTIONS)}")
     if spec.profile:
-        if scene_id is None or scene_id not in _SCENES:
-            raise ValueError(f"section {section!r} requires scene_id in {_SCENES}")
+        if scene_id is not None and scene_id not in _SCENES:
+            raise ValueError(f"scene_id must be one of {_SCENES}; got {scene_id!r}")
     elif scene_id is not None:
         raise ValueError(f"section {section!r} does not take a scene_id")
     if not isinstance(values, dict) or not values:
@@ -208,21 +233,35 @@ def set_image_settings(
 
     dev = _config.resolve(device_name)
     config = _fetch_config(dev)
+    if spec.profile and scene_id is None:
+        scene_id = _active_scene(config)
     if spec.profile:
         profiles = config.get("profile") or []
-        assert scene_id is not None  # enforced by the validation above
+        assert scene_id is not None
         entry = profiles[scene_id] if scene_id < len(profiles) else None
         if not isinstance(entry, dict):
             raise ValueError(f"device returned no profile for scene_id {scene_id}")
-        current = dict(entry.get(spec.device_key) or {})
-    else:
-        current = dict(config.get(spec.device_key) or {})
-    current.update(updates)
-    _check_section_rules(section, current)
+    state_now = _section_state(spec, config, scene_id)
+    payload = {
+        field.key: state_now[friendly]
+        for friendly, field in spec.fields.items()
+        if state_now.get(friendly) is not None
+    }
+    payload.update(updates)
+    _check_section_rules(section, payload)
 
     path = spec.path.replace("{scene}", str(scene_id)) if spec.profile else spec.path
-    resp = _http.put_json(dev, path, payload=current)
+    resp = _http.put_json(dev, path, payload=payload)
     _http.expect_ok(resp, f"set image settings {section}")
+
+    out: Dict[str, Any] = {
+        "section": section,
+        "changed": dict(values),
+        "state": _section_state(spec, _fetch_config(dev), scene_id),
+    }
+    if spec.profile:
+        out["scene_id"] = scene_id
+    return out
 
 
 COMMANDS = {

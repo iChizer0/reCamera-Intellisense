@@ -193,23 +193,27 @@ Both value calls change pin direction; they are not passive probes.
 
 ## ISP image settings
 
-`get_image_settings` returns `{video_adjustment, night_to_day, profiles[3]}`
-(profiles: 0=general, 1=day, 2=night). `set_image_settings section=…
-values={…} [scene_id=…]` merges a partial object into one section
-(read-modify-write) and PUTs it. `scene_id` is required for profile sections,
-rejected for the two global ones.
+`get_image_settings` returns `{video_adjustment, night_to_day, profiles[3]}`;
+the profile the camera is currently using is `night_to_day.profile_current`.
+`set_image_settings section=… values={…} [scene_id=…]` merges a partial
+object into one section (read-modify-write), PUTs it, and returns
+`{section, changed, state}` (+ `scene_id` for profile sections) with the
+section re-read after the write. For profile sections `scene_id` defaults
+to the active profile, so writes take visible effect immediately; pass
+0/1/2 explicitly to pre-configure an inactive profile. Writes to an inactive
+profile are stored but have no visible effect until that profile goes live.
 
 | Section | `scene_id` | Fields (values) |
 |---|---|---|
 | `video_adjustment` | — | `rotation` (0/90/180/270), `flip` (close/mirror/flip/centrosymmetric), `power_line_frequency` (PAL(50HZ)/NTSC(60HZ)) |
 | `night_to_day` | — | `mode` (0=auto/1=scheduled/2=fixed), `filter_level` (0–2), `filter_time` (1–60 s), `dawn_time`/`dusk_time` (0–86400 s, dusk > dawn), `profile_select` (0–2) |
-| `adjustment` | 0/1/2 | `brightness`, `contrast`, `hue`, `saturation`, `sharpness` (0–100) |
-| `exposure` | 0/1/2 | `exposure_mode`, `gain_mode` (auto/manual), `exposure_time` (fraction string like `1/60`), `exposure_gain` (0–100) |
-| `backlight` | 0/1/2 | `blc_region`/`hdr`/`hlc` (open/close — **mutually exclusive**), `blc_strength`, `dark_boost_level` (0–100), `hdr_level` (=1), `hlc_level` (1–100) |
-| `white_balance` | 0/1/2 | `style` (auto/manual/daylight/streetlamp/outdoor), `color_temperature` (2800–7500 K) |
-| `enhancement` | 0/1/2 | `noise_reduce_mode` (0/1), `spatial_denoise_level`, `temporal_denoise_level` (0–100) |
+| `adjustment` | opt 0/1/2 | `brightness`, `contrast`, `hue`, `saturation`, `sharpness` (0–100) |
+| `exposure` | opt 0/1/2 | `exposure_mode`, `gain_mode` (auto/manual), `exposure_time` (fraction string like `1/60`), `exposure_gain` (1–128) |
+| `backlight` | opt 0/1/2 | `blc_region`/`hdr`/`hlc` (open/close — **mutually exclusive**), `blc_strength`, `dark_boost_level` (0–100), `hdr_level` (=1), `hlc_level` (1–100) |
+| `white_balance` | opt 0/1/2 | `style` (auto/manual/daylight/streetlamp/outdoor), `color_temperature` (2800–7500 K) |
+| `enhancement` | opt 0/1/2 | `noise_reduce_mode` (0/1), `spatial_denoise_level`, `temporal_denoise_level` (0–100) |
 
-Example: `rcl set_image_settings section=video_adjustment 'values={"rotation":180}'`
+Example: `rcl set_image_settings section=adjustment 'values={"saturation":80}'`
 
 ## Acoustic heads
 

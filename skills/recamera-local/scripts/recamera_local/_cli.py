@@ -186,7 +186,7 @@ EXAMPLES: Dict[str, str] = {
     "get_gpio_value": "rcl get_gpio_value pin_id=106 debounce_ms=100",
     "get_image_settings": "rcl get_image_settings",
     "set_image_settings": (
-        "rcl set_image_settings section=video_adjustment 'values={\"rotation\":180}'"
+        "rcl set_image_settings section=adjustment 'values={\"saturation\":80}'"
     ),
     "list_apps": "rcl list_apps",
     "get_app_logs": "rcl get_app_logs app_id=acousticslab tail=100",

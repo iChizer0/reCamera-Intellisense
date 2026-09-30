@@ -253,21 +253,21 @@ Actions are `FORMAT`, `FREE_UP`, `EJECT`, and `REMOVE_FILES_OR_DIRECTORIES`. `FO
 | `get_image_settings` | `device_name` | — |
 | `set_image_settings` | `device_name`, `section`, `values` | `scene_id` |
 
-`get_image_settings` returns the full config: `video_adjustment`, `night_to_day`, and `profiles` (3 entries: general/day/night), each with `adjustment`, `exposure`, `backlight`, `white_balance`, `enhancement`.
+`get_image_settings` returns the full config: `video_adjustment`, `night_to_day` (including `profile_current` — the profile the camera is currently using), and `profiles` (3 entries), each with `adjustment`, `exposure`, `backlight`, `white_balance`, `enhancement`.
 
-`set_image_settings` merges a partial `values` object into one section (read-modify-write) and PUTs it. `scene_id` (0/1/2) is required for profile sections and rejected for the two global ones. Sections and fields:
+`set_image_settings` merges a partial `values` object into one section (read-modify-write), PUTs it, and returns `{section, changed, state}` (+ `scene_id` for profile sections) with the section re-read after the write. For profile sections `scene_id` (0/1/2) defaults to the active profile (`profile_current`) so writes take visible effect immediately; pass it explicitly to pre-configure an inactive profile. It is rejected for the two global sections. Writes to an inactive profile are stored but have no visible effect until that profile goes live. Sections and fields:
 
 | Section | Fields (friendly → device) |
 |---|---|
 | `video_adjustment` | `rotation` (0/90/180/270), `flip` (close/mirror/flip/centrosymmetric), `power_line_frequency` (PAL(50HZ)/NTSC(60HZ)) |
 | `night_to_day` | `mode` (0=auto/1=scheduled/2=fixed), `filter_level` (0–2), `filter_time` (1–60 s), `dawn_time`/`dusk_time` (0–86400 s, dusk > dawn), `profile_select` (0–2) |
 | `adjustment` | `brightness`, `contrast`, `hue`, `saturation`, `sharpness` (0–100) |
-| `exposure` | `exposure_mode`, `gain_mode` (auto/manual), `exposure_time` (fraction string like `1/60`), `exposure_gain` (0–100) |
+| `exposure` | `exposure_mode`, `gain_mode` (auto/manual), `exposure_time` (fraction string like `1/60`), `exposure_gain` (1–128) |
 | `backlight` | `blc_region`/`hdr`/`hlc` (open/close — **mutually exclusive**, max one open), `blc_strength`, `dark_boost_level` (0–100), `hdr_level` (=1), `hlc_level` (1–100) |
 | `white_balance` | `style` (auto/manual/daylight/streetlamp/outdoor), `color_temperature` (2800–7500 K) |
 | `enhancement` | `noise_reduce_mode` (0/1), `spatial_denoise_level`, `temporal_denoise_level` (0–100) |
 
-Example: `recamera set_image_settings device_name=cam1 section=video_adjustment 'values={"rotation":180}'`
+Example: `recamera set_image_settings device_name=cam1 section=adjustment 'values={"saturation":80}'`
 
 ## Python API
 

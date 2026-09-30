@@ -145,7 +145,7 @@ EXAMPLES: Dict[str, str] = {
     "get_image_settings": "recamera get_image_settings device_name=cam1",
     "set_image_settings": (
         "recamera set_image_settings device_name=cam1 "
-        "section=video_adjustment 'values={\"rotation\":180}'"
+        "section=adjustment 'values={\"saturation\":80}'"
     ),
     "get_rule_system_info": "recamera get_rule_system_info device_name=cam1",
     "get_record_config": "recamera get_record_config device_name=cam1",

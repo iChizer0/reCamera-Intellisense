@@ -45,6 +45,19 @@ class _State:
         self.record_rule = {"sCurrentSelected": "ALWAYS_ON", "dTimer": {"iIntervalSeconds": 60}}
         self.rebooted = False
         self.image_puts = []
+        adj = {"iBrightness": 50, "iContrast": 50, "iHue": 50,
+               "iSaturation": 50, "iSharpness": 100}
+        blc = {"sBLCRegion": "close", "sHDR": "close", "sHLC": "close",
+               "iBLCStrength": 50, "iDarkBoostLevel": 0, "iHDRLevel": 1,
+               "iHLCLevel": 50}
+        self.image = {
+            "videoAdjustment": {"iImageRotation": 0, "sImageFlip": "close",
+                                "sPowerLineFrequencyMode": "PAL(50HZ)"},
+            "nightToDay": {"iMode": 0, "iDawnTime": 21600, "iDuskTime": 64800,
+                           "iNightToDayFilterLevel": 1, "iNightToDayFilterTime": 5,
+                           "iProfileSelect": 0, "iProfileCur": 1},
+            "profile": [{"imageAdjustment": dict(adj), "BLC": dict(blc)} for _ in range(3)],
+        }
         self.gpio = {
             106: {"settings": {"state": "disabled", "edge": "none", "debounce_ms": 0}, "value": 0},
         }
@@ -239,24 +252,7 @@ class FakeDevice(BaseHTTPRequestHandler):
             self._json({"info": {"name": f"GPIO{pin}", "chip": "gpio0", "line": pin,
                                  "capabilities": ["FLOATING"]}, "settings": g["settings"]})
         elif path == "/cgi-bin/entry.cgi/image/0":
-            self._json({
-                "videoAdjustment": {"iImageRotation": 0, "sImageFlip": "close",
-                                    "sPowerLineFrequencyMode": "PAL(50HZ)"},
-                "nightToDay": {"iMode": 0, "iDawnTime": 21600, "iDuskTime": 64800,
-                               "iNightToDayFilterLevel": 1, "iNightToDayFilterTime": 5,
-                               "iProfileSelect": 0},
-                "profile": [
-                    {"BLC": {"sBLCRegion": "close", "sHDR": "close", "sHLC": "close",
-                             "iBLCStrength": 50, "iDarkBoostLevel": 0, "iHDRLevel": 1,
-                             "iHLCLevel": 50}},
-                    {"BLC": {"sBLCRegion": "close", "sHDR": "close", "sHLC": "close",
-                             "iBLCStrength": 50, "iDarkBoostLevel": 0, "iHDRLevel": 1,
-                             "iHLCLevel": 50}},
-                    {"BLC": {"sBLCRegion": "close", "sHDR": "close", "sHLC": "close",
-                             "iBLCStrength": 50, "iDarkBoostLevel": 0, "iHDRLevel": 1,
-                             "iHLCLevel": 50}},
-                ],
-            })
+            self._json(st.image)
         else:
             self._json({"error": "not found"}, status=404)
 
@@ -350,7 +346,20 @@ class FakeDevice(BaseHTTPRequestHandler):
             return
         u = urllib.parse.urlsplit(self.path)
         if u.path.startswith("/cgi-bin/entry.cgi/image/0/"):
-            self.st.image_puts.append((u.path, self._body()))
+            body = self._body()
+            self.st.image_puts.append((u.path, body))
+            rest = u.path[len("/cgi-bin/entry.cgi/image/0/"):]
+            img = self.st.image
+            if rest == "video-adjustment":
+                img["videoAdjustment"].update(body)
+            elif rest == "night-to-day":
+                img["nightToDay"].update(body)
+            else:  # {scene}/{section}
+                scene, slug = rest.split("/", 1)
+                key = {"adjustment": "imageAdjustment", "exposure": "exposure",
+                       "blc": "BLC", "white-blance": "whiteBlance",
+                       "enhancement": "imageEnhancement"}[slug]
+                img["profile"][int(scene)].setdefault(key, {}).update(body)
             self._json({"code": 0})
         else:
             self._json({"error": "not found"}, status=404)
@@ -660,13 +669,44 @@ class TestImage(LocalSkillTest):
         self.assertEqual(cfg["video_adjustment"]["rotation"], 0)
         self.assertEqual(len(cfg["profiles"]), 3)
         self.assertIn("backlight", cfg["profiles"][0])
+        self.assertEqual(cfg["night_to_day"]["profile_current"], 1)
 
-    def test_set_image_settings_merges_and_puts(self):
-        rl.set_image_settings(section="video_adjustment", values={"rotation": 180})
+    def test_set_image_settings_merges_and_verifies(self):
+        result = rl.set_image_settings(section="video_adjustment", values={"rotation": 180})
         path, payload = self.st.image_puts[-1]
         self.assertTrue(path.endswith("/video-adjustment"))
         self.assertEqual(payload["iImageRotation"], 180)
         self.assertEqual(payload["sImageFlip"], "close")  # merged, not replaced
+        self.assertEqual(result["changed"], {"rotation": 180})
+        self.assertEqual(result["state"]["rotation"], 180)  # re-read after write
+
+    def test_profile_section_defaults_to_active_profile(self):
+        result = rl.set_image_settings(section="adjustment", values={"brightness": 70})
+        self.assertEqual(result["scene_id"], 1)  # fake iProfileCur
+        path, payload = self.st.image_puts[-1]
+        self.assertIn("/image/0/1/adjustment", path)
+        self.assertEqual(payload["iBrightness"], 70)
+        self.assertEqual(payload["iSaturation"], 50)  # merged sibling
+        self.assertEqual(result["state"]["brightness"], 70)
+
+    def test_explicit_scene_overrides_default(self):
+        result = rl.set_image_settings(section="adjustment", scene_id=2, values={"hue": 55})
+        self.assertEqual(result["scene_id"], 2)
+        path, _ = self.st.image_puts[-1]
+        self.assertIn("/image/0/2/adjustment", path)
+
+    def test_invalid_scene_rejected(self):
+        with self.assertRaises(ValueError):
+            rl.set_image_settings(section="adjustment", scene_id=3, values={"hue": 55})
+
+    def test_malformed_profile_rejected(self):
+        self.st.image["profile"][1] = None
+        with self.assertRaises(ValueError):
+            rl.set_image_settings(section="adjustment", values={"hue": 55})  # defaults to scene 1
+
+    def test_exposure_gain_bounds(self):
+        with self.assertRaises(ValueError):
+            rl.set_image_settings(section="exposure", values={"exposure_gain": 129})
 
     def test_blc_hdr_hlc_mutex_enforced(self):
         with self.assertRaises(ValueError):
@@ -674,10 +714,6 @@ class TestImage(LocalSkillTest):
                 section="backlight", scene_id=0,
                 values={"blc_region": "open", "hdr": "open"},
             )
-
-    def test_profile_section_requires_scene(self):
-        with self.assertRaises(ValueError):
-            rl.set_image_settings(section="adjustment", values={"brightness": 60})
 
 
 class TestSourcesAndSedRetirement(LocalSkillTest):
