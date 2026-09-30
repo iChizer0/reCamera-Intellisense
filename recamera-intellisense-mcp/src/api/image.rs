@@ -91,7 +91,7 @@ static SECTIONS: &[SectionSpec] = &[
             FieldSpec { friendly: "exposure_mode", key: "sExposureMode", kind: FieldKind::StrEnum(&["auto", "manual"]) },
             FieldSpec { friendly: "gain_mode", key: "sGainMode", kind: FieldKind::StrEnum(&["auto", "manual"]) },
             FieldSpec { friendly: "exposure_time", key: "sExposureTime", kind: FieldKind::Fraction },
-            FieldSpec { friendly: "exposure_gain", key: "iExposureGain", kind: FieldKind::IntRange(0, 100) },
+            FieldSpec { friendly: "exposure_gain", key: "iExposureGain", kind: FieldKind::IntRange(1, 128) },
         ],
         extras: &[],
     },
@@ -274,24 +274,40 @@ fn check_section_rules(spec: &SectionSpec, merged: &Value) -> Result<()> {
     Ok(())
 }
 
-/// Pure core: validate `values`, merge into `config`, return (PUT path, payload).
+/// Active profile = nightToDay.iProfileCur (day/night switching picks it).
+fn active_scene(config: &Value) -> Result<i64> {
+    let cur = config
+        .get("nightToDay")
+        .and_then(|n| n.get("iProfileCur"))
+        .and_then(|v| v.as_i64());
+    match cur {
+        Some(c) if SCENES.contains(&c) => Ok(c),
+        _ => bail!("device did not report an active image profile (iProfileCur)"),
+    }
+}
+
+/// Pure core: validate `values`, merge into `config`, return (PUT path, payload, scene).
 fn build_update(
     section: &str,
     values: &Value,
     scene_id: Option<i64>,
     config: &Value,
-) -> Result<(String, Value)> {
+) -> Result<(String, Value, Option<i64>)> {
     let spec = find_section(section)?;
-    if spec.profile {
-        let Some(id) = scene_id else {
-            bail!("section {section:?} requires scene_id in {SCENES:?}");
-        };
-        if !SCENES.contains(&id) {
-            bail!("section {section:?} requires scene_id in {SCENES:?}");
+    let resolved = if spec.profile {
+        match scene_id {
+            Some(id) if SCENES.contains(&id) => Some(id),
+            Some(id) => bail!("scene_id must be one of {SCENES:?}; got {id}"),
+            // Default to the profile the camera is currently using, so the
+            // write takes visible effect immediately.
+            None => Some(active_scene(config)?),
         }
-    } else if scene_id.is_some() {
-        bail!("section {section:?} does not take a scene_id");
-    }
+    } else {
+        if scene_id.is_some() {
+            bail!("section {section:?} does not take a scene_id");
+        }
+        None
+    };
     let Some(obj) = values.as_object().filter(|o| !o.is_empty()) else {
         bail!("'values' must be a non-empty object of section fields");
     };
@@ -304,7 +320,7 @@ fn build_update(
 
     let mut current = Map::new();
     if spec.profile {
-        let id = scene_id.expect("validated above") as usize;
+        let id = resolved.expect("profile section") as usize;
         let entry = config
             .get("profile")
             .and_then(|p| p.as_array())
@@ -330,11 +346,11 @@ fn build_update(
     check_section_rules(spec, &merged)?;
 
     let path = if spec.profile {
-        spec.path.replace("{scene}", &scene_id.expect("validated above").to_string())
+        spec.path.replace("{scene}", &resolved.expect("profile section").to_string())
     } else {
         spec.path.to_string()
     };
-    Ok((path, merged))
+    Ok((path, merged, resolved))
 }
 
 pub async fn set_settings(
@@ -343,12 +359,35 @@ pub async fn set_settings(
     section: &str,
     values: &Value,
     scene_id: Option<i64>,
-) -> Result<()> {
+) -> Result<Value> {
     // Validate before any IO where possible; RMW needs the current config.
     let config = client.get_json(device, PATH_IMAGE, None).await?;
-    let (path, payload) = build_update(section, values, scene_id, &config)?;
+    let (path, payload, resolved) = build_update(section, values, scene_id, &config)?;
     let resp = client.put_json(device, &path, Some(&payload)).await?;
-    expect_ok(&resp, &format!("set image settings {section}"))
+    expect_ok(&resp, &format!("set image settings {section}"))?;
+
+    // Re-read the section as proof the device accepted the write.
+    let spec = find_section(section)?;
+    let fresh = client.get_json(device, PATH_IMAGE, None).await?;
+    let raw = match resolved {
+        Some(id) => fresh
+            .get("profile")
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.get(id as usize))
+            .and_then(|e| e.get(spec.device_key))
+            .cloned()
+            .unwrap_or(Value::Null),
+        None => fresh.get(spec.device_key).cloned().unwrap_or(Value::Null),
+    };
+    let mut out = json!({
+        "section": spec.name,
+        "changed": values,
+        "state": normalize_section(spec, &raw),
+    });
+    if let Some(id) = resolved {
+        out["scene_id"] = json!(id);
+    }
+    Ok(out)
 }
 
 // MARK: Tests
@@ -393,8 +432,19 @@ mod tests {
 
     #[test]
     fn scene_id_rules() {
-        assert!(build_update("adjustment", &json!({"brightness": 50}), None, &config()).is_err());
+        // omitted: resolves to the active profile (iProfileCur = 1 in config())
+        let (path, ..) =
+            build_update("adjustment", &json!({"brightness": 50}), None, &config()).unwrap();
+        assert_eq!(path, "/cgi-bin/entry.cgi/image/0/1/adjustment");
+        assert!(build_update("adjustment", &json!({"brightness": 50}), Some(3), &config()).is_err());
         assert!(build_update("video_adjustment", &json!({"rotation": 0}), Some(1), &config()).is_err());
+    }
+
+    #[test]
+    fn active_scene_missing_is_an_error() {
+        let mut bad = config();
+        bad["nightToDay"].as_object_mut().unwrap().remove("iProfileCur");
+        assert!(build_update("adjustment", &json!({"brightness": 50}), None, &bad).is_err());
     }
 
     #[test]
@@ -406,11 +456,13 @@ mod tests {
         assert!(build_update("exposure", &json!({"exposure_time": "1/00"}), Some(0), &config()).is_err());
         assert!(build_update("video_adjustment", &json!({"rotation": false}), None, &config()).is_err());
         assert!(build_update("backlight", &json!({"hdr_level": true}), Some(0), &config()).is_err());
+        assert!(build_update("exposure", &json!({"exposure_gain": 129}), Some(0), &config()).is_err());
+        assert!(build_update("exposure", &json!({"exposure_gain": 0}), Some(0), &config()).is_err());
     }
 
     #[test]
     fn read_modify_write_merges_full_section() {
-        let (path, payload) =
+        let (path, payload, ..) =
             build_update("adjustment", &json!({"brightness": 80}), Some(2), &config()).unwrap();
         assert_eq!(path, "/cgi-bin/entry.cgi/image/0/2/adjustment");
         assert_eq!(payload["iBrightness"], 80);
@@ -420,20 +472,20 @@ mod tests {
     #[test]
     fn backlight_mutual_exclusion_after_merge() {
         assert!(build_update("backlight", &json!({"hdr": "open", "hlc": "open"}), Some(0), &config()).is_err());
-        let (_, payload) = build_update("backlight", &json!({"hdr": "open"}), Some(0), &config()).unwrap();
+        let (_, payload, ..) = build_update("backlight", &json!({"hdr": "open"}), Some(0), &config()).unwrap();
         assert_eq!(payload["sHDR"], "open");
     }
 
     #[test]
     fn night_to_day_dusk_must_follow_dawn() {
         assert!(build_update("night_to_day", &json!({"dawn_time": 70000}), None, &config()).is_err());
-        let (_, payload) = build_update("night_to_day", &json!({"dusk_time": 60000}), None, &config()).unwrap();
+        let (_, payload, ..) = build_update("night_to_day", &json!({"dusk_time": 60000}), None, &config()).unwrap();
         assert_eq!(payload["iDuskTime"], 60000);
     }
 
     #[test]
     fn white_blance_uses_device_spelling() {
-        let (path, payload) =
+        let (path, payload, ..) =
             build_update("white_balance", &json!({"color_temperature": 5000}), Some(1), &config()).unwrap();
         assert_eq!(path, "/cgi-bin/entry.cgi/image/0/1/white-blance");
         assert_eq!(payload["iWhiteBalanceCT"], 5000);
@@ -444,5 +496,7 @@ mod tests {
         let mut bad = config();
         bad["profile"].as_array_mut().unwrap()[1] = Value::Null;
         assert!(build_update("adjustment", &json!({"brightness": 50}), Some(1), &bad).is_err());
+        // also via default resolution (iProfileCur = 1)
+        assert!(build_update("adjustment", &json!({"brightness": 50}), None, &bad).is_err());
     }
 }

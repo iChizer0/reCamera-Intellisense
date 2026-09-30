@@ -417,7 +417,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Merge a partial 'values' object into one ISP section (read-modify-write). Sections: video_adjustment, night_to_day, adjustment, exposure, backlight, white_balance, enhancement. scene_id (0/1/2) required for profile sections. Validates ranges, enums, and the BLC/HDR/HLC mutual exclusion.",
+        description = "Merge a partial 'values' object into one ISP section (read-modify-write), then re-read it as proof of application. Sections: video_adjustment, night_to_day, adjustment, exposure, backlight, white_balance, enhancement. For profile sections, scene_id (0/1/2) defaults to the profile the camera is currently using (night_to_day.profile_current) so writes take visible effect immediately; pass it explicitly to pre-configure an inactive profile. Validates ranges, enums, and the BLC/HDR/HLC mutual exclusion.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -430,7 +430,7 @@ impl ReCameraServer {
         Parameters(params): Parameters<SetImageSettingsParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let device = try_tool!(self.resolve(&params.device_name).await);
-        try_tool!(
+        let out = try_tool!(
             api_image::set_settings(
                 &self.client,
                 &device,
@@ -440,7 +440,7 @@ impl ReCameraServer {
             )
             .await
         );
-        Ok(text_result("Image settings updated."))
+        Ok(try_tool!(json_result(&out)))
     }
 
     // MARK: Detection
