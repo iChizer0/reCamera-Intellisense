@@ -46,13 +46,21 @@ struct Args {
     #[arg(long, default_value_t = 500)]
     merged_queue_size: usize,
 
-    /// Merged results time window in seconds
+    /// Display lifetime after first showing a rule or completing its recording
     #[arg(long, default_value_t = 100)]
     merged_window_secs: u64,
 
     /// Timeout (ms) for unmatched rule events before promoting
     #[arg(long, default_value_t = 1000)]
     rule_timeout_ms: u64,
+
+    /// Maximum recording associations (separate from the pending/display queues)
+    #[arg(long, default_value_t = 1000)]
+    recording_cache_size: usize,
+
+    /// Lifetime of recording associations and unmatched files in seconds
+    #[arg(long, default_value_t = 3600)]
+    recording_cache_ttl_secs: u64,
 
     /// Allowed absolute path prefix for /file endpoint
     #[arg(long, default_value = "/mnt")]
@@ -80,7 +88,11 @@ async fn main() {
         allowed_file_prefix = PathBuf::from("/mnt");
     }
 
-    info!("reCamera Intellisense daemon starting");
+    info!(
+        // Event contract identifier for startup diagnostics.
+        contract = "recording-events-file-identity-v3",
+        "reCamera Intellisense daemon starting"
+    );
     info!(
         ws_url = %args.ws_url,
         allowed_path_prefix = %allowed_file_prefix.display()
@@ -92,6 +104,8 @@ async fn main() {
         merged_capacity: args.merged_queue_size,
         merged_window_secs: args.merged_window_secs,
         rule_promote_timeout_ms: args.rule_timeout_ms,
+        recording_cache_capacity: args.recording_cache_size,
+        recording_cache_ttl_secs: args.recording_cache_ttl_secs,
     };
     let store = EventStore::new_shared(config);
 

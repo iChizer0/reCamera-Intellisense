@@ -21,12 +21,12 @@ Drive one or more [reCamera Pro](https://wiki.seeedstudio.com/recamera_pro_getti
 ## Requirements
 
 - `python3` ≥ 3.9 (stdlib only); reachable device HTTP/HTTPS API (TCP `80`/`443`)
-- Per-device token (Web Console → Device Info → Connection Settings); may be empty for local devices. Store: `~/.recamera/devices.json` (auto-created, chmod `600`).
+- Per-device **HTTP API Access Key** (Web Console → Device Info → Connection Settings); may be empty for local devices. This is NOT the ordinary Web-login JWT: pass the raw Access Key as `token`, and the SDK/MCP adds the `Bearer` prefix. Store: `~/.recamera/devices.json` (auto-created, chmod `600`).
 
 ## Security
 
 - **Capabilities**: network access to configured device IPs, credential persistence in `~/.recamera/devices.json`, filesystem writes (captures/downloads), GPIO control, and device administration (reboot, storage format, ISP changes). Host-level tool use is `Bash` only (invoking the bundled CLI).
-- **Tokens are bearer credentials** — never commit or log them. Device-facing outputs (`list_devices` etc.) never include them.
+- **Tokens are bearer credentials** — never commit or log them. Device-facing outputs (`list_devices` etc.) never include them. Do not paste a Web-login JWT as the SDK/MCP Access Key; that JWT belongs in the browser's `token` cookie instead.
 - **Confirmation gates**: `storage_task_submit` (FORMAT/FREE_UP/EJECT/REMOVE), `delete_file`, and `reboot_device` refuse unless `confirm=true` — always ask the user first. `ensure_storage` prints a stderr note whenever it changes slot/rotation state.
 - **Event clearing is deliberately ungated**: `clear_intellisense_events`/`clear_detection_events` purge only the daemon's transient event buffer, which refills itself continuously; the protected evidence (recordings, snapshots on disk) sits behind `delete_file` and storage-format gates. Confirm gates are reserved for irreversible operations with material harm, so agents do not learn to reflexively pass `confirm=true`.
 - **Relay URLs**: `fetch_record` returns relay links for large recordings. They need no credentials, but the path embeds a random UUID (unguessable, capability-style) and the relay auto-expires (device default TTL 300s); still avoid sharing them publicly.
@@ -131,7 +131,7 @@ rci set_record_config device_name=cam1 rule_enabled=true writer_format=MP4
 rci set_detection_rules device_name=cam1 'rules=[{"name":"alarm","source_filter":["acousticslab"],"label_filter":["Cat"],"debounce_times":3}]'
 ```
 
-Event-polling loop (Python): checkpoint `ckpt = int(time.time()*1000)`, call `get_detection_events(device_name=…, start_unix_ms=ckpt)`, advance `ckpt` past each `timestamp_unix_ms`, `fetch_file` any `snapshot_path`, sleep 2 s.
+Event-polling loop (Python): keep a small overlap behind `ckpt`; merge each returned row by `uid_str` (or decimal `uid` on older SDKs) and each file by `file_id_str` (legacy fallback: path + creator UID). Once the expected `file_ids` for a row have arrived, iterate every `file_events[].path` for `fetch_file`; use `snapshot_path` only as the first-file/legacy fallback. Process the whole batch before advancing `ckpt` to `max(timestamp_unix_ms)+1`, and continue merging duplicate UIDs from the overlap. A late FILE retains the RULE timestamp, so timestamp-only checkpoints must not be treated as exactly-once delivery.
 
 ## Scope and hand-off
 

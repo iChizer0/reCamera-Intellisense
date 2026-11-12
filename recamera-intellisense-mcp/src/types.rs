@@ -216,11 +216,76 @@ fn default_confidence_range() -> Vec<f64> {
     vec![0.25, 1.0]
 }
 
+fn deserialize_optional_dst<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<bool>>, D::Error> {
+    Option::<bool>::deserialize(deserializer).map(Some)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DetectionFileEvent {
+    pub op: String,
+    pub path: String,
+    pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attributes: Option<String>,
+    /// Creator RULE UID; zero denotes a continuous clip without a creator RULE.
+    pub event_uid: u64,
+    /// Exact decimal form for JSON consumers that cannot represent u64 safely.
+    pub event_uid_str: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<u64>,
+    /// Exact decimal form for JSON consumers that cannot represent u64 safely.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_id_str: Option<String>,
+    /// ISO-8601 UTC display string; timestamp_unix_ms remains the source value.
+    pub timestamp: String,
+    pub timestamp_unix_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tz: Option<String>,
+    /// Signed seconds east of UTC, including DST.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tz_offset: Option<i64>,
+    /// Outer None omits the field; inner None preserves an explicit JSON null.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_dst"
+    )]
+    pub dst: Option<Option<bool>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DetectionEvent {
+    /// ISO-8601 UTC display string; timestamp_unix_ms remains the source value.
     pub timestamp: String,
     pub timestamp_unix_ms: u64,
     pub rule_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uid: Option<u64>,
+    /// Exact decimal form for JSON consumers that cannot represent u64 safely.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uid_str: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_ids: Option<Vec<u64>>,
+    /// Exact decimal forms for JSON consumers that cannot represent u64 safely.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_id_strs: Option<Vec<String>>,
+    #[serde(default)]
+    pub file_events: Vec<DetectionFileEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tz: Option<String>,
+    /// Signed seconds east of UTC, including DST.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tz_offset: Option<i64>,
+    /// Outer None omits the field; inner None preserves an explicit JSON null.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_dst"
+    )]
+    pub dst: Option<Option<bool>>,
+    /// Compatibility projection of the first accepted file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_path: Option<String>,
 }
@@ -689,10 +754,10 @@ pub struct SetDetectionRulesParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetDetectionEventsParams {
     pub device_name: String,
-    /// Inclusive lower bound (Unix ms).
-    pub start_unix_ms: Option<i64>,
-    /// Inclusive upper bound (Unix ms).
-    pub end_unix_ms: Option<i64>,
+    /// Inclusive lower bound (nonnegative Unix ms).
+    pub start_unix_ms: Option<u64>,
+    /// Inclusive upper bound (nonnegative Unix ms).
+    pub end_unix_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1079,5 +1144,21 @@ mod tests {
         // `list_devices` output can be forwarded verbatim.
         let p: DeviceNameParams = serde_json::from_str(r#"{"name":"cam1"}"#).unwrap();
         assert_eq!(p.device_name, "cam1");
+    }
+
+    #[test]
+    fn detection_query_bounds_use_the_daemons_unsigned_timestamp_domain() {
+        let params: GetDetectionEventsParams = serde_json::from_value(serde_json::json!({
+            "device_name":"cam1", "start_unix_ms":u64::MAX, "end_unix_ms":u64::MAX
+        }))
+        .unwrap();
+        assert_eq!(params.start_unix_ms, Some(u64::MAX));
+        assert_eq!(params.end_unix_ms, Some(u64::MAX));
+        assert!(
+            serde_json::from_value::<GetDetectionEventsParams>(serde_json::json!({
+                "device_name":"cam1", "start_unix_ms":-1
+            }))
+            .is_err()
+        );
     }
 }

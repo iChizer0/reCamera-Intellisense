@@ -228,10 +228,84 @@ Actions are `FORMAT`, `FREE_UP`, `EJECT`, and `REMOVE_FILES_OR_DIRECTORIES`. `FO
 ### Detection event
 
 ```json
-{"timestamp":"2026-04-20T12:34:56Z","timestamp_unix_ms":1745152496000,"rule_name":"front-door-person","snapshot_path":"/mnt/.../abcd.jpg"}
+{
+  "timestamp": "2025-04-20T12:34:56.000Z",
+  "timestamp_unix_ms": 1745152496000,
+  "rule_name": "front-door-person",
+  "uid": 812345678901,
+  "uid_str": "812345678901",
+  "file_ids": [812345678910, 812345678911],
+  "file_id_strs": ["812345678910", "812345678911"],
+  "file_events": [
+    {
+      "op": "ADDED",
+      "path": "/mnt/sdcard/abcd.jpg",
+      "size": 123456,
+      "attributes": "COMPLETED",
+      "event_uid": 812345678901,
+      "event_uid_str": "812345678901",
+      "file_id": 812345678910,
+      "file_id_str": "812345678910",
+      "timestamp": "2025-04-20T12:34:57.000Z",
+      "timestamp_unix_ms": 1745152497000,
+      "tz": "Asia/Shanghai",
+      "tz_offset": 28800,
+      "dst": false
+    }
+  ],
+  "tz": "Asia/Shanghai",
+  "tz_offset": 28800,
+  "dst": false,
+  "snapshot_path": "/mnt/sdcard/abcd.jpg"
+}
 ```
 
-`snapshot_path` (when present) is an absolute on-device path — feed it to `fetch_file`, not `fetch_record`.
+Normalized `file_events` is always an array and retains every associated
+Photo/Video file, including shared and continuous files. `file_id` identifies
+the file; `event_uid` identifies its creator RULE and is zero for a continuous
+clip. The legacy `snapshot_path`, when present, is the first file's absolute
+on-device path — feed it to `fetch_file`, not `fetch_record`. Older daemons with
+only `file_event` are normalized to a one-element `file_events` array.
+
+Rule and file `timestamp` strings are UTC; `timestamp_unix_ms` preserves the
+original Unix-milliseconds value. Optional `tz`, signed `tz_offset` seconds
+(including DST), and `dst` (`true`, `false`, or explicit `null`) describe each
+event's own timestamp. Do not apply the offset again when formatting the UTC
+value. Numeric IDs are unsigned 64-bit integers. Prefer the decimal-string
+companions `uid_str`, `file_id_str`, `file_id_strs`, and `event_uid_str` for
+correlation: JavaScript `JSON.parse` rounds numbers above 2^53-1. Use
+`get_intellisense_events` for the unmodified daemon projection; it accepts the
+array response and the legacy `{events:[...]}` envelope, as do both normalizers.
+For timestamps beyond the four-digit-year range, the display string uses an
+ISO-8601 signed expanded year (for example `+584556019-...`), which not every
+date parser supports; use `timestamp_unix_ms` for arithmetic and filtering.
+Python preserves its legacy display precision (no fractional part at an exact
+second, otherwise six digits); MCP uses three fractional digits. Both represent
+the same `timestamp_unix_ms`.
+
+The daemon keeps a bounded, volatile view rather than persistent history: by
+default 500 visible results for 100 seconds and 1000 recording associations for
+3600 seconds. Retention follows recent display/completion activity so a late FILE
+can restore a result; it does not guarantee retention of the newest trigger
+timestamps. Query output is still sorted and filtered by the original RULE
+`timestamp`. Restart, TTL expiry, or capacity eviction can discard history.
+
+For Agent polling, use an overlapping time window and merge whole rows by
+`uid_str`; query bounds are inclusive and late FILE updates retain the original
+RULE timestamp. Deduplicate files by `file_id_str` (legacy fallback: path plus
+creator UID), and fetch EVERY `file_events[].path`, not just `snapshot_path`.
+After processing the complete batch, advancing the checkpoint to
+`max(timestamp_unix_ms)+1` is safe only when intentionally ignoring subsequent
+late-file mutations; otherwise retain the overlap. `writer_created=true` means
+at least one new writer task, not guaranteed publication or that all referenced
+files are new. `op=REMOVED` must not be downloaded as a new recording.
+
+Malformed required event/file fields or an unexpected response envelope produce
+an explicit error, never a fabricated empty history. Optional legacy metadata
+may be absent; `file_event` is normalized to a one-element `file_events` array.
+`fetch_file` returns inline base64 for images and small payloads, or a size/note
+for large non-image payloads; use SDK `raw=true` for bytes, or `fetch_record`
+when a relay URL is wanted.
 
 ## System
 

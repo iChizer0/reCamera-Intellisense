@@ -576,7 +576,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Get detection events within an optional [start_unix_ms, end_unix_ms] window.",
+        description = "Get detection events in the inclusive RULE-time window. Returns file_events with exact numeric and decimal-string IDs, plus optional timezone metadata. Late FILE updates retain the original RULE timestamp: merge by uid/file_id and use an overlap when polling instead of only advancing the time checkpoint.",
         annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_detection_events(

@@ -15,10 +15,12 @@ pub fn unix_ms_to_iso8601(unix_ms: u64) -> String {
     let minutes = (remaining % 3600) / 60;
     let seconds = remaining % 60;
     let (year, month, day) = days_to_ymd(days);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        year, month, day, hours, minutes, seconds, millis
-    )
+    let year = if year <= 9999 {
+        format!("{year:04}")
+    } else {
+        format!("+{year}")
+    };
+    format!("{year}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}.{millis:03}Z")
 }
 
 fn days_to_ymd(days: u64) -> (u64, u64, u64) {

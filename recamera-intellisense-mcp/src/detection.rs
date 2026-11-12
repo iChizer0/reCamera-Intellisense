@@ -198,10 +198,12 @@ fn validate_confidence_range(idx: usize, range: &[f64]) -> Result<()> {
 pub async fn get_detection_events(
     client: &ApiClient,
     device: &DeviceRecord,
-    start_unix_ms: Option<i64>,
-    end_unix_ms: Option<i64>,
+    start_unix_ms: Option<u64>,
+    end_unix_ms: Option<u64>,
 ) -> Result<Vec<DetectionEvent>> {
-    api_daemon::get_events(client, device, start_unix_ms, end_unix_ms).await
+    api_daemon::get_events(client, device, start_unix_ms, end_unix_ms)
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:#}"))
 }
 
 pub async fn clear_detection_events(client: &ApiClient, device: &DeviceRecord) -> Result<()> {

@@ -116,7 +116,7 @@ def get_intellisense_events(
         return data
     if isinstance(data, dict) and isinstance(data.get("events"), list):
         return data["events"]
-    return []
+    raise RecameraError("Invalid intellisense event response: expected an array or {'events': [...]}")
 
 
 def clear_intellisense_events(device_name: Optional[str] = None) -> None:
