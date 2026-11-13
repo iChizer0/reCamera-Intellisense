@@ -5,6 +5,7 @@ pub mod acoustic;
 pub mod apps;
 pub mod backup;
 pub mod capture;
+pub mod clock;
 pub mod daemon;
 pub mod gpio;
 pub mod image;
@@ -14,6 +15,7 @@ pub mod relay;
 pub mod rule;
 pub mod storage;
 pub mod system;
+pub mod tzmap;
 pub mod video;
 
 use anyhow::{bail, Result};

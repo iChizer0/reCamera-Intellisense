@@ -315,10 +315,25 @@ when a relay URL is wanted.
 | `get_resource_info` | `device_name` | — |
 | `get_battery_status` | `device_name` | — |
 | `get_system_time` | `device_name` | — |
+| `set_system_time` | `device_name`, `method` | `timezone`, `timestamp`, `ntp_server`, `ntp_port` |
+| `probe_timezone` | `device_name` | `dhcp_probe`, `geoip_url` |
+| `sync_system_time` | `device_name` | `timezone`, `method`, `ntp_server`, `tolerance_s`, `wait_s`, `reference_unix`, `dhcp_probe`, `dry_run` |
 | `export_device_config` | `device_name`, `output` | — |
 | `reboot_device` | `device_name`, `confirm` | — |
 
 `get_device_info` → `{serial_number, firmware_version, sensor_model, base_plate_model}`. `get_battery_status` → `{attached, charging, display_steps, total_steps}` (`attached=false` on battery-less base plates). `export_device_config` downloads the full device config tarball to the LOCAL `output` path (read-only for the device; refuses to overwrite an existing file) — snapshot before making changes. `get_resource_info` → `{cpu_usage, npu_usage, memory: {total_gb, used_gb, usage_percent}, storage: {...}}`. `reboot_device` is disruptive: all streams, captures, and sessions drop. Destructive commands (`storage_task_submit`, `delete_file`, `reboot_device`) require `confirm=true` and otherwise refuse without touching the device.
+
+### Clock and timezone
+
+The clock is UTC seconds; the timezone only relabels display — **fixing the clock never requires knowing the timezone first**. Every probe below is broken-clock safe (a wrong clock breaks TLS certificate validation, so they deliberately avoid TLS): UDP NTP, plain-HTTP `Date` headers and geo-IP, passive WiFi 802.11d country beacons, DHCP timezone options. Each probe is one bounded attempt; nothing retry-storms.
+
+- `set_system_time method=ntp|manual [timezone=IANA] [timestamp=unix] [ntp_server=…] [ntp_port=…]` — `ntp` applies server config (kept unless overridden) and **triggers an immediate sync** on the device; `manual` sets the clock to `timestamp` (default: SDK host time). The firmware returns success even when it **silently rejects an unknown timezone**, so the command re-reads the device and raises a loud verification error instead of a false success.
+- `probe_timezone [dhcp_probe=false] [geoip_url=…]` — read-only evidence gathering → `{perspective, suggested_timezone, needs_user_confirmation, candidates: [{timezone, via}], sources: [...], notes}`.
+  - `geoip`: plain-HTTP IP geolocation (default `http://ip-api.com/json/…`; honors the ip-api.com free-tier ToS — non-commercial use) → IANA name directly.
+  - `wifi_country`: 802.11d Country IEs majority-voted (`{CN: 89, US: 7}`-style votes are reported); only when the SDK runs **on the camera**. Single-zone countries map to one IANA name; multi-zone countries yield a candidate list.
+  - `dhcp`: RFC 4833 options 100/101 (`tcode` = IANA, `pcode` = POSIX) via a one-shot `udhcpc` probe that applies nothing; on-camera only, opt-in, skipped on static addressing.
+  - When the SDK runs on another machine, probes describe the **SDK host's** network location: `perspective: "sdk-host"` and `needs_user_confirmation` is forced — confirm with the user before applying.
+- `sync_system_time [timezone=auto|IANA|null] [method=auto|ntp|manual] [tolerance_s=120] [wait_s=15] [dry_run=false]` — the one-call "fix the device time". Reference time comes from an explicit `reference_unix`, else one SNTP query, else plain-HTTP `Date` headers, else (off-camera only) the SDK host clock — never the camera's own suspect clock. Flow: measure drift → decide timezone (`auto` applies only unambiguous on-device evidence; conflicts fix the clock anyway and set `timezone.needs_user_confirmation`) → apply (NTP preferred; manual stopgap re-arms NTP afterwards in auto mode; an explicit `method=manual` is respected as-is) → read-back verify → `{changed, verified, method_used, drift_before_s, drift_after_s, timezone: {…}, ntp, warnings, follow_up}`. When no reference exists, returns `needs_user_help` + `ask_user` and changes nothing — relay it to the user instead of retrying.
 
 ## Image (ISP)
 

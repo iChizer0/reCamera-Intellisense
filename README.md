@@ -8,6 +8,7 @@ AI-powered monitoring and control for [reCamera Pro](https://wiki.seeedstudio.co
 - **Real-time image & video capture** — on-demand JPG/RAW snapshots and MP4 video recording, independent of the detection pipeline.
 - **Intelligent detection monitoring** — configurable AI models, timed schedules, multi-category label filters, region-based rules, and debounce thresholds for precise event triggering.
 - **Event correlation & reporting** — the on-device monitor merges rule triggers with captured files in real-time, queryable by time range via HTTP API.
+- **Broken-clock-safe time repair** — `sync_system_time` fixes the device clock and timezone in one bounded call: SNTP / plain-HTTP `Date` / geo-IP / WiFi 802.11d country / DHCP RFC 4833 probes never depend on TLS (which a wrong clock breaks), ambiguous timezone evidence is escalated to the user instead of guessed, and silent firmware timezone rejections are caught by read-back verification.
 - **Agent-friendly CLI / SDK** — every operation is a single CLI command accepting JSON, or a Python function call, designed for seamless AI-agent integration (Claw, LangChain, etc.).
 
 For detailed API signatures and CLI schemas, see [API Reference](skills/recamera-intellisense/REFERENCE.md). To build **new** on-device capabilities (custom apps, model pipelines), use the [reamera-pysdk](https://github.com/Seeed-Studio/recamera-pro-ext-api/tree/main/skill/recamera-pysdk) skill instead — this project orchestrates what the device already does.

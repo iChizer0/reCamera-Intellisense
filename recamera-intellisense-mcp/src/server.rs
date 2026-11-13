@@ -9,8 +9,9 @@ use rmcp::{
 
 use crate::api::{
     acoustic as api_acoustic, apps as api_apps, backup as api_backup, capture as api_capture,
-    daemon as api_daemon, gpio as api_gpio, image as api_image, notify as api_notify,
-    rule as api_rule, storage as api_storage, system as api_system, video as api_video,
+    clock as api_clock, daemon as api_daemon, gpio as api_gpio, image as api_image,
+    notify as api_notify, rule as api_rule, storage as api_storage, system as api_system,
+    video as api_video,
 };
 use crate::api_client::ApiClient;
 use crate::detection;
@@ -380,6 +381,114 @@ impl ReCameraServer {
         let device = try_tool!(self.resolve(&params.device_name).await);
         let info = try_tool!(api_system::get_system_time(&self.client, &device).await);
         Ok(try_tool!(json_result(&info)))
+    }
+
+    #[tool(
+        description = "Set the device clock / timezone / NTP config, then re-read and verify. \
+        method='ntp' keeps/overrides the NTP server and triggers an immediate device-side sync; \
+        method='manual' sets the clock to `timestamp` (default: now). `timezone` is an IANA name \
+        like 'Asia/Shanghai' (omit to keep current). Note: the firmware reports success even when \
+        it silently rejects an unknown timezone — this tool re-reads the device and turns such a \
+        silent rejection into a loud error. Prefer `sync_system_time` for 'fix the clock' requests.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn set_system_time(
+        &self,
+        Parameters(params): Parameters<SetSystemTimeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let out = try_tool!(
+            api_system::set_system_time(
+                &self.client,
+                &device,
+                api_system::SetSystemTimeArgs {
+                    method: params.method,
+                    timezone: params.timezone,
+                    timestamp: params.timestamp,
+                    ntp_server: params.ntp_server,
+                    ntp_port: params.ntp_port,
+                },
+            )
+            .await
+        );
+        Ok(try_tool!(json_result(&out)))
+    }
+
+    #[tool(
+        description = "Discover the device's timezone from clock-independent evidence — no changes. \
+        Sources: plain-HTTP geo-IP (works even when the device clock is wrong, because TLS is not \
+        involved), WiFi 802.11d country beacons majority-voted (only when running on the camera), \
+        and DHCP RFC 4833 options 100/101 (opt-in, on-camera, DHCP interfaces only). Returns \
+        `suggested_timezone`, the per-source evidence, and `needs_user_confirmation` — when that is \
+        true (conflicting or host-side-only evidence), present the candidates and ASK THE USER \
+        instead of guessing.",
+        annotations(read_only_hint = true, open_world_hint = true)
+    )]
+    async fn probe_timezone(
+        &self,
+        Parameters(params): Parameters<ProbeTimezoneParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let out = try_tool!(
+            api_clock::probe_timezone(
+                &self.client,
+                &device,
+                params.dhcp_probe,
+                params.geoip_url.as_deref(),
+            )
+            .await
+        );
+        Ok(try_tool!(json_result(&out)))
+    }
+
+    #[tool(
+        description = "Fix the device clock (and optionally the timezone) in one bounded call — the \
+        answer to 'please fix the device time'. Fixing the clock never requires knowing the \
+        timezone first: the reference time is measured via SNTP, then plain-HTTP Date headers, then \
+        the host clock when this server runs off-camera — never the camera's own suspect clock. \
+        method='auto' uses NTP when reachable, else a manual stopgap (and re-arms NTP afterwards so \
+        the device self-heals). timezone='auto' (default) applies probe evidence only when \
+        unambiguous ('keep' leaves the current timezone untouched); conflicting evidence fixes \
+        the clock anyway and asks the user about the timezone. When the result has \
+        `needs_user_help`, relay `ask_user` to the user — do not retry-loop.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn sync_system_time(
+        &self,
+        Parameters(params): Parameters<SyncSystemTimeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let device = try_tool!(self.resolve(&params.device_name).await);
+        let timezone = match params.timezone.as_deref() {
+            Some("auto") | None => Some("auto"),
+            Some("keep") => None,
+            other => other,
+        };
+        let out = try_tool!(
+            api_clock::sync_system_time(
+                &self.client,
+                &device,
+                timezone,
+                params.method.as_deref().unwrap_or("auto"),
+                params.ntp_server.as_deref(),
+                params.tolerance_s.unwrap_or(120),
+                params.wait_s.unwrap_or(15),
+                params.reference_unix,
+                params.dhcp_probe,
+                params.dry_run,
+            )
+            .await
+        );
+        Ok(try_tool!(json_result(&out)))
     }
 
     #[tool(
@@ -1459,6 +1568,15 @@ impl ServerHandler for ReCameraServer {
                  `source_filter`=['acousticslab']; the legacy `sed` trigger kind is retired.\n\
                  5) Poll `get_detection_events` for recent matches and `fetch_file` / `fetch_record` to \
                  retrieve snapshots.\n\n\
+                 Fixing the device clock/timezone: call `sync_system_time` (one bounded call). The clock \
+                 is UTC seconds and never depends on knowing the timezone first — do NOT try to resolve \
+                 the timezone via HTTPS APIs before fixing the clock: with a wrong clock, TLS certificate \
+                 validation fails and such attempts loop uselessly. All probes used by `sync_system_time` \
+                 and `probe_timezone` are broken-clock safe (UDP NTP, plain-HTTP Date/geo-IP, WiFi 802.11d \
+                 country beacons, DHCP options 100/101). When a result carries `needs_user_confirmation` \
+                 or `needs_user_help`, relay it to the user instead of retrying. The device API rejects \
+                 unknown timezones silently — `set_system_time`/`sync_system_time` re-read the device and \
+                 verify, so trust their output rather than assuming success.\n\n\
                  For HTTPS devices, keep `allow_unsecured=false` on the trusted network and only opt in to \
                  `true` for self-signed certs on a trusted LAN."
                     .to_string(),

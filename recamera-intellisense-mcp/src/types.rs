@@ -594,6 +594,67 @@ pub struct DeviceNameParams {
     pub device_name: String,
 }
 
+// MARK: MCP params - clock repair
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetSystemTimeParams {
+    /// Name of the registered device (also accepted as `name`).
+    #[serde(alias = "name")]
+    pub device_name: String,
+    /// Sync method: "ntp" (configure NTP, device syncs immediately) or
+    /// "manual" (set the clock to `timestamp`).
+    pub method: String,
+    /// IANA timezone name, e.g. "Asia/Shanghai". Omit to keep current.
+    pub timezone: Option<String>,
+    /// Unix seconds for method="manual". Defaults to this host's clock.
+    pub timestamp: Option<i64>,
+    /// NTP server for method="ntp". Omit to keep current.
+    pub ntp_server: Option<String>,
+    /// NTP port for method="ntp". Omit to keep current (default 123).
+    pub ntp_port: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ProbeTimezoneParams {
+    /// Name of the registered device (also accepted as `name`).
+    #[serde(alias = "name")]
+    pub device_name: String,
+    /// Also run a one-shot DHCP RFC 4833 (options 100/101) probe. Only when
+    /// the MCP server runs on the camera itself and an interface is
+    /// DHCP-managed; the probe applies nothing.
+    #[serde(default)]
+    pub dhcp_probe: bool,
+    /// Override the plain-HTTP geo-IP endpoint (default ip-api.com).
+    pub geoip_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SyncSystemTimeParams {
+    /// Name of the registered device (also accepted as `name`).
+    #[serde(alias = "name")]
+    pub device_name: String,
+    /// "auto" (default when omitted): probe and apply an unambiguous timezone;
+    /// an IANA name applies it directly; "keep" leaves it untouched.
+    pub timezone: Option<String>,
+    /// "auto" (default) | "ntp" | "manual".
+    pub method: Option<String>,
+    /// NTP server override; omit to keep the configured one.
+    pub ntp_server: Option<String>,
+    /// Clocks within this many seconds count as correct (default 120).
+    pub tolerance_s: Option<i64>,
+    /// How long to wait for the NTP sync after applying (default 15s).
+    pub wait_s: Option<u64>,
+    /// Trusted unix time to use as the reference instead of probing (testing /
+    /// embedding); never needed in normal use.
+    pub reference_unix: Option<i64>,
+    /// Also probe DHCP timezone options (see probe_timezone).
+    #[serde(default)]
+    pub dhcp_probe: bool,
+    /// Report the plan without changing anything.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
 // MARK: MCP params - image (ISP)
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

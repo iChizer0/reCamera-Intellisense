@@ -278,6 +278,32 @@ a brief pipeline gap.
   before making configuration changes so a human can restore a known-good
   state from the Web Console.
 
+## Clock and timezone
+
+- `get_system_time` → `{method, timestamp, timezone, tz, ntp: {address, port}}`.
+- `set_system_time method=ntp|manual [timezone=IANA] [timestamp=unix] [ntp_server=…] [ntp_port=…]`
+  — `ntp` applies server config (kept unless overridden) and triggers an
+  immediate device-side sync; `manual` sets the clock to `timestamp`
+  (default: now). The firmware silently accepts unknown timezones with
+  success, so the command re-reads the device and raises a loud verification
+  error instead of a false success.
+- `probe_timezone [dhcp_probe=false] [geoip_url=…]` →
+  `{perspective: "device", suggested_timezone, needs_user_confirmation,
+  candidates: [{timezone, via}], sources, notes}`. Sources (one bounded
+  attempt each, all broken-clock safe): plain-HTTP geo-IP (IANA name direct);
+  WiFi 802.11d country IEs majority-voted (votes reported; single-zone
+  countries map to one IANA name, multi-zone to candidates); DHCP RFC 4833
+  options 100/101 (`tcode`/`pcode`, opt-in one-shot probe, applies nothing,
+  skipped on static addressing).
+- `sync_system_time [timezone=auto|IANA|null] [method=auto|ntp|manual]
+  [tolerance_s=120] [wait_s=15] [dry_run=false]` — the one-call "fix the
+  device time". Reference time: explicit `reference_unix` → one SNTP query →
+  plain-HTTP `Date` headers; never the camera's own suspect clock. Returns
+  `{changed, verified, method_used, drift_before_s, drift_after_s,
+  timezone: {…}, ntp, warnings, follow_up}`; on total reference failure
+  returns `needs_user_help` + `ask_user` and changes nothing. A manual
+  stopgap re-arms NTP afterwards (auto mode only) so the device self-heals; explicit `method=manual` is respected as-is.
+
 ## Serve-mode protocol
 
 `rcl serve` reads one JSON object per line from stdin and writes one JSON

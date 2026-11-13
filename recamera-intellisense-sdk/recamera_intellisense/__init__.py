@@ -63,9 +63,11 @@ from .system import (
     get_resource_info,
     get_system_time,
     reboot_device,
+    set_system_time,
 )
+from .clock import probe_timezone, sync_system_time
 
-__version__ = "2.3.0"
+__version__ = "2.4.0"
 
 __all__ = [
     "RecameraError",
@@ -140,6 +142,9 @@ __all__ = [
     "get_device_info",
     "get_resource_info",
     "get_system_time",
+    "set_system_time",
+    "probe_timezone",
+    "sync_system_time",
     "get_battery_status",
     "reboot_device",
     "get_image_settings",

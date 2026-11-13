@@ -42,6 +42,7 @@ if __name__ == "__main__" and __package__ is None:
         apps,
         backup,
         capture,
+        clock,
         detection,
         device,
         files,
@@ -64,6 +65,7 @@ else:
         apps,
         backup,
         capture,
+        clock,
         detection,
         device,
         files,
@@ -84,6 +86,7 @@ else:
 _MODULES = (
     device,
     system,
+    clock,
     image,
     rule,
     storage,
@@ -141,6 +144,11 @@ EXAMPLES: Dict[str, str] = {
     "get_device_info": "recamera get_device_info device_name=cam1",
     "get_resource_info": "recamera get_resource_info device_name=cam1",
     "get_system_time": "recamera get_system_time device_name=cam1",
+    "set_system_time": (
+        "recamera set_system_time device_name=cam1 method=ntp timezone=Asia/Shanghai"
+    ),
+    "probe_timezone": "recamera probe_timezone device_name=cam1",
+    "sync_system_time": "recamera sync_system_time device_name=cam1 timezone=auto",
     "reboot_device": "recamera reboot_device device_name=cam1 confirm=true",
     "get_image_settings": "recamera get_image_settings device_name=cam1",
     "set_image_settings": (

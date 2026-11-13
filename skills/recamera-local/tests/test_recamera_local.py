@@ -45,6 +45,14 @@ class _State:
         self.record_rule = {"sCurrentSelected": "ALWAYS_ON", "dTimer": {"iIntervalSeconds": 60}}
         self.rebooted = False
         self.image_puts = []
+        # Firmware-like clock state; the PUT emulates two real firmware quirks:
+        # unknown timezones are silently ignored with code:0, and an ntp-mode
+        # PUT triggers an immediate sync (to ntp_now when the test sets one).
+        self.time_state = {"sMethod": "ntp", "iTimestamp": 1745152496,
+                           "sTimezone": "UTC", "sTz": "UTC0",
+                           "dNtpConfig": {"sAddress": "pool.ntp.org", "sPort": "123"}}
+        self.known_zones = {"UTC", "Asia/Shanghai", "Europe/Berlin"}
+        self.ntp_now = None
         adj = {"iBrightness": 50, "iContrast": 50, "iHue": 50,
                "iSaturation": 50, "iSharpness": 100}
         blc = {"sBLCRegion": "close", "sHDR": "close", "sHLC": "close",
@@ -172,8 +180,7 @@ class FakeDevice(BaseHTTPRequestHandler):
                         "sMem": {"iMemTotal": "0.5", "iMemUsed": "0.2", "iMemUsage": "40"},
                         "sStorage": {"iStorageTotal": "7", "iStorageUsed": "1", "iStorageUsage": "15"}})
         elif path == "/cgi-bin/entry.cgi/system/time":
-            self._json({"sMethod": "ntp", "iTimestamp": 1745152496, "sTimezone": "UTC",
-                        "sTz": "UTC0", "dNtpConfig": {"sAddress": "pool.ntp.org", "sPort": "123"}})
+            self._json(dict(st.time_state))
         elif path == "/cgi-bin/entry.cgi/record/storage/status":
             mount = str(st.mnt / "rc_mmcblk0p8")
             slot = {"sDevPath": "/dev/mmcblk0p8", "sMountPath": mount,
@@ -345,6 +352,34 @@ class FakeDevice(BaseHTTPRequestHandler):
         if not self._check_auth():
             return
         u = urllib.parse.urlsplit(self.path)
+        if u.path == "/cgi-bin/entry.cgi/system/time":
+            body = self._body()
+            st = self.st
+            if body.get("sMethod") not in ("ntp", "manual"):
+                self._json({"code": 400, "message": "Invalid parameter value: sMethod"})
+                return
+            if "dNtpConfig" not in body:
+                self._json({"code": 400, "message": "Missing parameter: dNtpConfig"})
+                return
+            ts = st.time_state
+            method = body["sMethod"]
+            tz = body.get("sTimezone")
+            if isinstance(tz, str) and tz in st.known_zones:
+                ts["sTimezone"] = tz
+                ts["sTz"] = "UTC+8" if tz == "Asia/Shanghai" else tz
+            # else: firmware silently keeps the old timezone with code:0
+            ts["sMethod"] = method
+            if method == "manual":
+                ts["iTimestamp"] = int(body.get("iTimestamp") or 0)
+                ts["dNtpConfig"] = None
+            else:
+                ntp = body.get("dNtpConfig") or {}
+                ts["dNtpConfig"] = {"sAddress": ntp.get("sAddress"),
+                                    "sPort": ntp.get("sPort"), "status": 0}
+                if st.ntp_now is not None:
+                    ts["iTimestamp"] = int(st.ntp_now)  # immediate sync triggered
+            self._json({"code": 0, "message": "Time set successfully"})
+            return
         if u.path.startswith("/cgi-bin/entry.cgi/image/0/"):
             body = self._body()
             self.st.image_puts.append((u.path, body))
@@ -969,6 +1004,145 @@ class TestCli(LocalSkillTest):
         self.assertFalse(out[0]["ok"])
         self.assertIn("missing required argument", out[0]["error"])
         self.assertTrue(out[1]["ok"])
+
+
+class ClockRepairTests(LocalSkillTest):
+    """set_system_time verification + sync orchestration against the fake device."""
+
+    def test_set_manual_time_applies_and_verifies(self):
+        out = rl.set_system_time(method="manual", timestamp=1_800_000_000,
+                                 timezone="Asia/Shanghai")
+        self.assertTrue(out["verified"])
+        self.assertEqual(out["timestamp"], 1_800_000_000)
+        self.assertEqual(out["timezone"], "Asia/Shanghai")
+        self.assertIsNone(out["ntp"]["address"])
+
+    def test_silently_rejected_timezone_is_a_loud_error(self):
+        with self.assertRaises(RecameraError) as ctx:
+            rl.set_system_time(method="ntp", timezone="Mars/Olympus")
+        self.assertIn("verification failed", str(ctx.exception))
+        # The device kept the old timezone, as the firmware really does.
+        self.assertEqual(rl.get_system_time()["timezone"], "UTC")
+
+    def test_set_time_requires_valid_method(self):
+        with self.assertRaises(RecameraError):
+            rl.set_system_time(method="chrony")
+
+    def test_sync_ntp_path_via_fake_device(self):
+        st = self.server.state  # type: ignore[attr-defined]
+        st.time_state["iTimestamp"] = 1_000_000_000  # badly wrong
+        st.ntp_now = 1_800_000_000                    # the "real" time sync lands on
+        with (
+            unittest.mock.patch.object(
+                rl.clock, "_reference_time",
+                return_value=(1_800_000_000.0, {"source": "sntp"})),
+            unittest.mock.patch.object(
+                rl.clock, "probe_timezone",
+                return_value={"suggested_timezone": "Asia/Shanghai",
+                              "needs_user_confirmation": False,
+                              "candidates": [{"timezone": "Asia/Shanghai",
+                                              "via": ["geoip"]}],
+                              "perspective": "device"}),
+        ):
+            out = rl.sync_system_time(timezone="auto")
+        self.assertTrue(out["changed"])
+        self.assertTrue(out["verified"])
+        self.assertEqual(out["method_used"], "ntp")
+        self.assertEqual(out["timezone"]["applied"], "Asia/Shanghai")
+        self.assertEqual(rl.get_system_time()["timestamp"], 1_800_000_000)
+
+    def test_sync_manual_fallback_restores_ntp_mode(self):
+        st = self.server.state  # type: ignore[attr-defined]
+        st.time_state["iTimestamp"] = 1_000_000_000
+        st.ntp_now = None  # NTP unreachable device-side
+        with (
+            unittest.mock.patch.object(
+                rl.clock, "_reference_time",
+                return_value=(1_800_000_000.0, {"source": "http_date"})),
+            unittest.mock.patch.object(
+                rl.clock, "probe_timezone",
+                return_value={"suggested_timezone": None,
+                              "needs_user_confirmation": False,
+                              "candidates": [], "perspective": "device"}),
+        ):
+            out = rl.sync_system_time(timezone=None)
+        self.assertEqual(out["method_used"], "manual")
+        self.assertTrue(out["verified"])
+        # The auto-mode stopgap re-armed NTP so the device self-heals later.
+        self.assertEqual(out.get("method_restored"), "ntp")
+        self.assertEqual(rl.get_system_time()["method"], "ntp")
+        self.assertEqual(rl.get_system_time()["timestamp"], 1_800_000_000)
+
+    def test_explicit_manual_is_not_reverted_to_ntp(self):
+        st = self.server.state  # type: ignore[attr-defined]
+        st.time_state["iTimestamp"] = 1_000_000_000
+        st.ntp_now = None
+        with unittest.mock.patch.object(
+                rl.clock, "_reference_time",
+                return_value=(1_800_000_000.0, {"source": "http_date"})):
+            out = rl.sync_system_time(timezone=None, method="manual")
+        self.assertEqual(out["method_used"], "manual")
+        self.assertNotIn("method_restored", out)
+        self.assertEqual(rl.get_system_time()["method"], "manual")
+
+    def test_timezone_only_change_keeps_sync_mode_and_clock(self):
+        st = self.server.state  # type: ignore[attr-defined]
+        st.time_state["iTimestamp"] = 1_800_000_000  # already accurate
+        st.ntp_now = None
+        with unittest.mock.patch.object(
+                rl.clock, "_reference_time",
+                return_value=(1_800_000_030.0, {"source": "sntp"})):
+            out = rl.sync_system_time(timezone="Asia/Shanghai")
+        self.assertTrue(out["changed"])
+        self.assertTrue(out["verified"])
+        self.assertEqual(out["method_used"], "ntp")  # no manual churn
+        self.assertNotIn("method_restored", out)
+        # Clock untouched (the ntp PUT had no ntp_now to sync to).
+        self.assertEqual(rl.get_system_time()["timestamp"], 1_800_000_000)
+        self.assertEqual(rl.get_system_time()["timezone"], "Asia/Shanghai")
+
+    def test_sync_without_reference_asks_user_and_touches_nothing(self):
+        st = self.server.state  # type: ignore[attr-defined]
+        st.time_state["iTimestamp"] = 1_000_000_000
+        with unittest.mock.patch.object(
+                rl.clock, "_reference_time", return_value=(None, {"source": "none"})):
+            out = rl.sync_system_time()
+        self.assertTrue(out["needs_user_help"])
+        self.assertIn("ask_user", out)
+        self.assertEqual(st.time_state["iTimestamp"], 1_000_000_000)
+
+    def test_sync_already_accurate_is_a_no_op(self):
+        st = self.server.state  # type: ignore[attr-defined]
+        st.time_state["iTimestamp"] = 1_800_000_000
+        with unittest.mock.patch.object(
+                rl.clock, "_reference_time",
+                return_value=(1_800_000_030.0, {"source": "sntp"})):
+            out = rl.sync_system_time(timezone=None, tolerance_s=120)
+        self.assertFalse(out["changed"])
+        self.assertTrue(out["verified"])
+
+    def test_probe_aggregation_with_patched_sources(self):
+        with (
+            unittest.mock.patch.object(
+                rl.clock, "_geoip",
+                return_value={"timezone": "Asia/Shanghai", "country_code": "CN",
+                              "url": "http://ip-api.com/json/"}),
+            unittest.mock.patch.object(
+                rl.clock, "_wifi_countries", return_value={"CN": 40, "US": 3}),
+        ):
+            out = rl.probe_timezone()
+        self.assertEqual(out["suggested_timezone"], "Asia/Shanghai")
+        self.assertFalse(out["needs_user_confirmation"])
+        cand = {c["timezone"]: c["via"] for c in out["candidates"]}
+        self.assertEqual(sorted(cand["Asia/Shanghai"]), ["geoip", "wifi_country"])
+
+    def test_probe_parsers(self):
+        env = {"opt100": "4353542d38", "opt101": "417369612f5368616e67686169"}
+        parsed = rl.clock._parse_dhcp_env(env)
+        self.assertEqual(parsed["pcode"], "CST-8")
+        self.assertEqual(parsed["tcode"], "Asia/Shanghai")
+        self.assertEqual(parsed["utc_offset_s"], 28_800)
+        self.assertEqual(rl.clock._parse_posix_tz_offset("EST5"), -18_000)
 
 
 if __name__ == "__main__":

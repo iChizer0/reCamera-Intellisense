@@ -82,7 +82,57 @@ def _probe(
             conn.request("GET", _PROBE_PATH, headers=headers)
             resp = conn.getresponse()
             status = resp.status
-        finally:
+        except Exception:
+            conn.close()
+            raise
+        # A 3xx to a *different* origin is not reachability for this SDK —
+        # real calls refuse cross-origin hops, so count it as unusable and let
+        # detection fall through to a directly-serving endpoint. Same-origin
+        # redirects are followed once.
+        if status in (301, 302, 303, 307, 308):
+            location = resp.getheader("Location")
+            resp.read()
+            conn.close()
+            if location:
+                import urllib.parse
+
+                base = f"{'https' if use_tls else 'http'}://{connect_host}:{port}"
+                target = urllib.parse.urlsplit(urllib.parse.urljoin(base, location))
+                if not target.netloc:
+                    same_origin = True  # relative Location: same origin by definition
+                else:
+                    t_scheme = target.scheme or ("https" if use_tls else "http")
+                    t_port = target.port or (443 if t_scheme == "https" else 80)
+                    same_origin = (
+                        t_scheme == ("https" if use_tls else "http")
+                        and (target.hostname or "").lower() == connect_host.lower()
+                        and t_port == port
+                    )
+                if not same_origin:
+                    return (
+                        f"{host}:{port} redirects to another origin "
+                        f"({t_scheme}://{target.hostname}:{t_port})."
+                    )
+                conn2: http.client.HTTPConnection
+                if use_tls:
+                    conn2 = http.client.HTTPSConnection(
+                        connect_host, port, timeout=timeout, context=ctx
+                    )
+                else:
+                    conn2 = http.client.HTTPConnection(connect_host, port, timeout=timeout)
+                try:
+                    conn2.request(
+                        "GET", target.path or "/", headers=headers
+                    )
+                    resp2 = conn2.getresponse()
+                    status = resp2.status
+                    resp2.read()
+                finally:
+                    conn2.close()
+            else:
+                return f"Unexpected response from device (HTTP {status})."
+        else:
+            resp.read()
             conn.close()
         if 200 <= status < 400:
             return None
@@ -128,6 +178,11 @@ def detect_local_device(
         ("https", port or 443, True),
         ("http", port or 80, False),
     ]
+    if host in _config.LOOPBACK_HOSTS:
+        # Loopback never needs TLS, and some firmware builds 307 :443 -> :80 —
+        # probe plain HTTP first so zero-config on-device agents land on the
+        # endpoint that serves the API directly.
+        probes.insert(0, ("http", port or 80, False))
     for protocol, probe_port, allow_unsecured in probes:
         if (
             _probe(

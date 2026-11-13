@@ -58,6 +58,7 @@ if __name__ == "__main__" and __package__ is None:
         apps,
         backup,
         capture,
+        clock,
         detect,
         gpio,
         image,
@@ -76,6 +77,7 @@ else:
         apps,
         backup,
         capture,
+        clock,
         detect,
         gpio,
         image,
@@ -91,6 +93,7 @@ else:
 
 _MODULES = (
     status,
+    clock,
     storage,
     capture,
     detect,
@@ -140,6 +143,9 @@ EXAMPLES: Dict[str, str] = {
     "get_device_info": "rcl get_device_info",
     "get_resource_info": "rcl get_resource_info",
     "get_system_time": "rcl get_system_time",
+    "set_system_time": "rcl set_system_time method=ntp timezone=Asia/Shanghai",
+    "probe_timezone": "rcl probe_timezone",
+    "sync_system_time": "rcl sync_system_time timezone=auto",
     "get_battery_status": "rcl get_battery_status",
     "export_device_config": "rcl export_device_config output=./backup-$(date +%s).tar",
     "reboot_device": "rcl reboot_device confirm=true",

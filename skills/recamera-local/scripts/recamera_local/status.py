@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Optional
 
 from . import _local as http
 from ._coerce import require_confirm
@@ -52,9 +53,13 @@ def get_resource_info() -> Dict[str, Any]:
     }
 
 
+def _raw_time() -> Dict[str, Any]:
+    return http.get_json(PATH_TIME) or {}
+
+
 def get_system_time() -> Dict[str, Any]:
     """Device clock, timezone, and NTP configuration."""
-    d = http.get_json(PATH_TIME) or {}
+    d = _raw_time()
     ntp = d.get("dNtpConfig") or {}
     return {
         "method": d.get("sMethod"),
@@ -62,6 +67,104 @@ def get_system_time() -> Dict[str, Any]:
         "timezone": d.get("sTimezone"),
         "tz": d.get("sTz"),
         "ntp": {"address": ntp.get("sAddress"), "port": ntp.get("sPort")},
+    }
+
+
+_METHODS = ("ntp", "manual")
+
+
+def _validate_timezone_name(tz: str) -> str:
+    tz = tz.strip()
+    if (
+        not tz
+        or len(tz) > 64
+        or not tz.isascii()
+        or any(c.isspace() for c in tz)
+        or ".." in tz
+        or not tz.replace("_", "").replace("-", "").replace("/", "").isalnum()
+    ):
+        raise RecameraError(
+            f"Invalid timezone {tz!r}: expected an IANA name like 'Asia/Shanghai'."
+        )
+    return tz
+
+
+def set_system_time(
+    *,
+    method: str,
+    timezone: Optional[str] = None,
+    timestamp: Optional[int] = None,
+    ntp_server: Optional[str] = None,
+    ntp_port: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Set the clock / timezone / NTP config, then read back and verify.
+
+    ``method="ntp"`` applies the NTP server config (keeping the current one
+    unless ``ntp_server``/``ntp_port`` are given) and triggers an immediate
+    sync. ``method="manual"`` sets the clock to ``timestamp`` (defaults to
+    the current time). ``timezone`` takes an IANA name (e.g.
+    ``Asia/Shanghai``); omitted = keep current.
+
+    The firmware reports success even when it silently rejects an unknown
+    timezone, so the device is re-read afterwards and a mismatch raises a
+    loud error instead of returning a false success.
+    """
+    method = (method or "").strip().lower()
+    if method not in _METHODS:
+        raise RecameraError(f"Invalid method {method!r}: expected one of {_METHODS}.")
+    current = _raw_time()
+    cur_ntp = current.get("dNtpConfig") or {}
+
+    tz = _validate_timezone_name(timezone) if timezone else current.get("sTimezone")
+    if not tz:
+        raise RecameraError("No timezone configured on the device; pass timezone=.")
+    if method == "manual":
+        ts = int(timestamp) if timestamp is not None else int(time.time())
+        if ts <= 0:
+            raise RecameraError(f"Invalid timestamp {ts}: expected unix seconds > 0.")
+        ntp_cfg = None
+    else:
+        ts = int(timestamp) if timestamp is not None else int(time.time())
+        address = (ntp_server or "").strip() or cur_ntp.get("sAddress") or "pool.ntp.org"
+        port = str(ntp_port if ntp_port is not None else (cur_ntp.get("sPort") or "123"))
+        ntp_cfg = {"sAddress": address, "sPort": port}
+
+    payload = {
+        "sMethod": method,
+        "dNtpConfig": ntp_cfg,
+        "iTimestamp": ts,
+        "sTimezone": tz,
+    }
+    resp = http.put_json(PATH_TIME, payload)
+    http.expect_ok(resp, "set system time")
+
+    # Read-back verification — the CGI returns success for a rejected timezone.
+    after = _raw_time()
+    problems = []
+    if timezone and after.get("sTimezone") != tz:
+        problems.append(
+            f"device kept timezone {after.get('sTimezone')!r} instead of {tz!r} "
+            "(unknown or unsupported IANA name — pick one from the Web Console list)"
+        )
+    if method == "manual":
+        drift = abs(int(after.get("iTimestamp") or 0) - ts)
+        if drift > 5:
+            problems.append(
+                f"device clock is {drift}s away from the requested timestamp"
+            )
+    if problems:
+        raise RecameraError(
+            "set_system_time was applied but verification failed: "
+            + "; ".join(problems)
+        )
+    ntp = after.get("dNtpConfig") or {}
+    return {
+        "method": after.get("sMethod"),
+        "timestamp": after.get("iTimestamp"),
+        "timezone": after.get("sTimezone"),
+        "tz": after.get("sTz"),
+        "ntp": {"address": ntp.get("sAddress"), "port": ntp.get("sPort")},
+        "verified": True,
     }
 
 
@@ -139,6 +242,7 @@ COMMANDS = {
     "get_device_info": get_device_info,
     "get_resource_info": get_resource_info,
     "get_system_time": get_system_time,
+    "set_system_time": set_system_time,
     "get_battery_status": get_battery_status,
     "reboot_device": reboot_device,
     "get_status": get_status,

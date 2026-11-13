@@ -18,6 +18,7 @@ from .acoustic import (
 from .apps import get_app_logs, list_apps, restart_app, start_app, stop_app
 from .backup import export_device_config
 from .capture import capture_image, get_capture_status, start_capture, stop_capture
+from .clock import probe_timezone, sync_system_time
 from .detect import (
     clear_detection_events,
     get_detection_events,
@@ -41,6 +42,7 @@ from .status import (
     get_status,
     get_system_time,
     reboot_device,
+    set_system_time,
 )
 from .storage import (
     configure_storage_quota,
@@ -68,6 +70,9 @@ __all__ = [
     "get_device_info",
     "get_resource_info",
     "get_system_time",
+    "set_system_time",
+    "probe_timezone",
+    "sync_system_time",
     "get_battery_status",
     "reboot_device",
     "export_device_config",

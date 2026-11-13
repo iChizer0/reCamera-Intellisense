@@ -40,7 +40,16 @@ Alternative argument forms when quoting gets awkward: `--key value`, or one sing
 
 Full schemas (trigger kinds, detection rules, ISP sections, event shape): **[REFERENCE.md](REFERENCE.md)**. Runtime truth: `rcl <command> --help`.
 
-- **Status**: `get_status` (one-call snapshot: device, load, battery, storage, capture, record pipeline, active model — call this first), `get_device_info`, `get_resource_info`, `get_battery_status`, `get_system_time`, `export_device_config output=…` (snapshot config before making changes), `reboot_device` (**confirm**).
+- **Status**: `get_status` (one-call snapshot: device, load, battery, storage, capture, record pipeline, active model — call this first), `get_device_info`, `get_resource_info`, `get_battery_status`, `get_system_time`, `set_system_time` / `probe_timezone` / `sync_system_time` (clock repair — see below), `export_device_config output=…` (snapshot config before making changes), `reboot_device` (**confirm**).
+
+### Fixing the clock ("device time is wrong")
+
+One call: `rcl sync_system_time` (defaults `timezone=auto method=auto`). Hard-won rules baked in — do not improvise around them:
+
+- **Clock first, timezone second.** The clock is UTC seconds; the timezone only relabels display. Never resolve the timezone via HTTPS APIs before fixing the clock: with a wrong clock, TLS validation fails and such attempts retry-loop. Every probe here is broken-clock safe: UDP NTP, plain-HTTP `Date` headers, plain-HTTP geo-IP, passive WiFi 802.11d country beacons, DHCP options 100/101 (`dhcp_probe=true`).
+- **The camera's own clock is never the reference** (that would be circular): SNTP → HTTP `Date` → give up honestly. When both fail the result is `needs_user_help` + `ask_user` — relay it (check DNS / firewall UDP 123 / ask the user for the time); do not retry.
+- **`timezone=auto` is conservative**: applied only on unambiguous on-device evidence; conflicts fix the clock anyway and set `needs_user_confirmation` with candidates to present to the user.
+- **Silent timezone rejection is real**: the firmware answers success and keeps the old zone. `set_system_time`/`sync_system_time` re-read and verify — a `verification failed` error means "pick a valid IANA name", not a crash.
 - **Capture**: `capture_image` (JPG → `{event, path, size}`; `path` is local — open it, don't re-fetch; `inline=true` adds base64), `start_capture` (`format=JPG|RAW|MP4`, `output` is an **on-device** dir), `get_capture_status`, `stop_capture`.
 - **Detect**: `get_detection_models_info` (vision label **names**), `get/set_detection_model`, `get/set_detection_rules`, `get/set_detection_schedule`, `wait_event`, `get_detection_events`, `clear_detection_events`.
 - **Sound**: `get_record_sources` (source ids + producible classes — check BEFORE compiling rules), `get_active_acoustic_model`, `list_acoustic_models`, `set_acoustic_model` (switch head / `default=true`).
@@ -110,3 +119,6 @@ This skill **orchestrates existing device capabilities** (record rules, capture,
 | `start_capture` code 30022 | `output` must be under a mounted slot — omit it to use the default. |
 | `list_records` fails | No slot enabled — `set_detection_rules` auto-enables internal storage, or use `set_storage_slot`. |
 | `read_file` rejects a path | Only absolute paths under `/mnt`, no `..`. |
+| Clock fix loops / TLS errors while "finding the timezone" | Wrong order — clock first via `sync_system_time`; its probes are all broken-clock safe (plain HTTP/UDP/RF). |
+| Timezone "applied" but nothing changed | The firmware silently rejects unknown IANA names with success — the commands verify by re-reading; pick a valid IANA name. |
+| `sync_system_time` → `needs_user_help` | No NTP and no plain-HTTP egress — relay `ask_user` (check DNS/firewall UDP 123, or have the user state the current time), don't retry. |

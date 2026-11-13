@@ -34,6 +34,17 @@ Drive one or more [reCamera Pro](https://wiki.seeedstudio.com/recamera_pro_getti
 - `fetch_file`/`delete_file` reject relative paths, `..`, and NUL bytes; the daemon enforces an allowlist.
 - This skill writes files, drives GPIO, and can format storage — point it only at hardware you own.
 
+## Fixing the device clock (and timezone)
+
+"Please fix the device time" = one call: `sync_system_time device_name=…` (defaults `timezone=auto method=auto`). The design exists because the naive path fails predictably — read this before improvising:
+
+- **Clock first, timezone second.** The clock is UTC seconds; the timezone only relabels display. Never try to *determine the timezone via HTTPS APIs before the clock is fixed*: with a wrong clock, TLS certificate validation fails (and some DNS setups misbehave), so geo-IP/time API calls error out or retry-loop. Every probe in `probe_timezone`/`sync_system_time` is broken-clock safe by construction: UDP NTP, plain-HTTP `Date` headers, plain-HTTP geo-IP, passive WiFi 802.11d country beacons, DHCP options 100/101.
+- **The management channel is immune.** SDK↔device is plain HTTP (or self-signed HTTPS with `allow_unsecured`), so a broken device clock never blocks these commands.
+- **Bounded, no retry storms.** Each probe is a single attempt with a hard timeout; the NTP sync waits at most `wait_s`. If all time references fail, the result carries `needs_user_help` + `ask_user` — relay that text to the user (check network / provide the current time) instead of retrying.
+- **`timezone=auto` is conservative.** It applies a suggestion only when the evidence is unambiguous *and* gathered on the camera itself. Conflicting sources or `perspective: "sdk-host"` (you manage a remote camera from a host elsewhere) set `needs_user_confirmation` — present the candidates and ask the user; do not guess.
+- **Verification is built in.** The firmware returns success even when it silently rejects an unknown timezone; `set_system_time`/`sync_system_time` re-read the device and turn that into a loud error. Trust their `verified` field, and re-read `get_system_time` if you need independent proof.
+- **Manual stopgaps self-heal.** When NTP is unreachable, `sync_system_time` sets the clock manually (warning included) and (in `method=auto`) re-arms NTP afterwards so the device keeps correcting itself hourly once the network recovers.
+
 ## Invocation
 
 ```bash
@@ -53,7 +64,7 @@ rci <command> --help                   # usage + a working example, per command
 
 - **Types** coerce from the function signature: ints (`quota_limit_bytes=-1`), floats, strict booleans (`true/false/yes/no/on/off/1/0`), `null`/`none` for optionals, JSON arrays/objects for structured params (`rules`, `schedule`, `trigger`, `files`) — inline or `@file.json` (`@-` = stdin; `@@` = literal `@`).
 - **Success**: pretty JSON on stdout (`None` → `null`), exit 0. **Failure**: message **plus usage + example** on stderr, non-zero exit — surface it and propose one fix.
-- **Discovery**: `rci` lists all 50 commands with required/optional keys; `rci list-commands` prints names only.
+- **Discovery**: `rci` lists all commands with required/optional keys; `rci list-commands` prints names only.
 
 Python in-process (preferred for loops and low-latency voice agents — avoids process spawn + TLS setup per call): `sys.path.insert(0, "{baseDir}/scripts")`, then `from recamera_intellisense import …` — the package exports every CLI command.
 
@@ -66,7 +77,7 @@ Python in-process (preferred for loops and low-latency voice agents — avoids p
 Full catalogue, per-command arguments, and key schemas: **[REFERENCE.md](REFERENCE.md)** — or `rci <command> --help` at runtime.
 
 - **Device**: `detect_local_device host=…`, `add_device`, `update_device`, `get_device`, `remove_device`, `list_devices` (registration probes the device before persisting).
-- **System**: `get_device_info` (firmware/sensor/serial), `get_resource_info` (CPU/NPU/mem/storage %), `get_battery_status`, `get_system_time`, `export_device_config output=./backup.tar` (snapshot config before changes), `reboot_device` (**disruptive** — drops all streams/sessions).
+- **System**: `get_device_info` (firmware/sensor/serial), `get_resource_info` (CPU/NPU/mem/storage %), `get_battery_status`, `get_system_time`, `set_system_time` / `probe_timezone` / `sync_system_time` (clock repair — see "Fixing the device clock" below), `export_device_config output=./backup.tar` (snapshot config before changes), `reboot_device` (**disruptive** — drops all streams/sessions).
 - **Image (ISP)**: `get_image_settings` (full config: video adjustment, night-to-day, 3 scene profiles), `set_image_settings section=… 'values={…}' [scene_id=…]` — sections: `video_adjustment`, `night_to_day`, `adjustment`, `exposure`, `backlight`, `white_balance`, `enhancement`; read-modify-write with validation (incl. BLC/HDR/HLC mutual exclusion). `scene_id` defaults to the active profile (`night_to_day.profile_current`) so writes apply visibly; the response re-reads the section as proof.
 - **Detection**: `get_detection_models_info`, `get/set_detection_model` (by `model_id` or `model_name`), `get/set_detection_schedule`, `get/set_detection_rules`, `get_detection_events` (`start_unix_ms`/`end_unix_ms`), `clear_detection_events`. Facade: `set_detection_rules` installs the `inference_set` trigger and ensures writer + storage by default; `get_detection_rules` returns `[]` when the active trigger is not `inference_set`.
 - **Acoustic**: `get_active_acoustic_model` → labels of the active sound model (null when the AcousticsLab app is stopped — start it in the App Center); `list_acoustic_models` → all trained heads across workspaces (active marked).
@@ -150,6 +161,9 @@ If neither covers the request, say so plainly instead of inventing capabilities.
 | `HTTP 401/403` | Token missing/invalid — re-copy from Web Console. |
 | `Connection refused` / `timed out` | Wrong host/port/protocol; check power and LAN. |
 | HTTPS certificate error | Use `allow_unsecured=true` (self-signed LAN certs only). |
+| Clock fix loops / TLS errors while "finding the timezone" | Wrong order — clock first via `sync_system_time`; its probes are all broken-clock safe (plain HTTP/UDP/RF), see "Fixing the device clock". |
+| Timezone "applied" but nothing changed | The firmware silently rejects unknown IANA names with success — `set_system_time`/`sync_system_time` already verify by re-reading; on `verification failed`, pick a valid IANA name. |
+| `sync_system_time` → `needs_user_help` | No NTP and no plain-HTTP egress — relay `ask_user` (check DNS/firewall UDP 123, or have the user state the current time), don't retry. |
 | `get_detection_rules` returns `[]` | Active trigger is not `inference_set` — see `get_record_trigger`. |
 | Rules set but no events | No storage slot; inactive schedule window; filters too tight; debounce too high. |
 | `{url, note}` instead of content | Video or >5 MiB — fetch the URL or raise `max_inline_bytes`. |

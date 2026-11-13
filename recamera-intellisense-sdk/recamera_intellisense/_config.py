@@ -159,6 +159,7 @@ def save_all(devices: Dict[str, Dict[str, Any]]) -> None:
 
 
 LOCAL_DEVICE_NAME = "local"
+LOOPBACK_HOSTS = {"127.0.0.1", "127.0.1.1", "localhost", "::1", "[::1]"}
 
 
 def _record(name: str, entry: Dict[str, Any]) -> DeviceRecord:

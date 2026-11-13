@@ -13,6 +13,14 @@ const PATH_TIME: &str = "/cgi-bin/entry.cgi/system/time";
 const PATH_REBOOT: &str = "/cgi-bin/entry.cgi/system/reboot";
 const PATH_BATTERY: &str = "/cgi-bin/entry.cgi/system/battery";
 
+pub struct SetSystemTimeArgs {
+    pub method: String,
+    pub timezone: Option<String>,
+    pub timestamp: Option<i64>,
+    pub ntp_server: Option<String>,
+    pub ntp_port: Option<u16>,
+}
+
 fn device_info_from(d: &Value) -> Value {
     json!({
         "serial_number": d.get("sSerialNumber"),
@@ -67,6 +75,118 @@ pub async fn get_resource_info(client: &ApiClient, device: &DeviceRecord) -> Res
 pub async fn get_system_time(client: &ApiClient, device: &DeviceRecord) -> Result<Value> {
     let d = client.get_json(device, PATH_TIME, None).await?;
     Ok(system_time_from(&d))
+}
+
+/// Set the device clock / timezone / NTP config, then read back and verify.
+///
+/// `method="ntp"` applies the NTP server config (keeping the current one
+/// unless overridden) and triggers an immediate sync on the device.
+/// `method="manual"` sets the clock to `timestamp` (defaults to now).
+/// `timezone` takes an IANA name; `None` keeps the current one.
+///
+/// The firmware reports success even when it silently rejects an unknown
+/// timezone, so the device is re-read afterwards: a mismatch is a loud error,
+/// not a false success.
+pub async fn set_system_time(
+    client: &ApiClient,
+    device: &DeviceRecord,
+    args: SetSystemTimeArgs,
+) -> Result<Value> {
+    let method = args.method.trim().to_ascii_lowercase();
+    anyhow::ensure!(
+        matches!(method.as_str(), "ntp" | "manual"),
+        "Invalid method {:?}: expected ntp|manual.",
+        args.method
+    );
+    let current = client.get_json(device, PATH_TIME, None).await?;
+    let cur_ntp = current.get("dNtpConfig").cloned().unwrap_or(json!({}));
+
+    let tz = match &args.timezone {
+        Some(tz) => {
+            let tz = tz.trim().to_string();
+            anyhow::ensure!(
+                super::clock::valid_timezone_name(&tz),
+                "Invalid timezone {tz:?}: expected an IANA name like 'Asia/Shanghai'."
+            );
+            tz
+        }
+        None => current
+            .get("sTimezone")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+    };
+    anyhow::ensure!(
+        !tz.is_empty(),
+        "No timezone configured on the device; pass timezone."
+    );
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let ts = args.timestamp.unwrap_or(now);
+    anyhow::ensure!(ts > 0, "Invalid timestamp {ts}: expected unix seconds > 0.");
+
+    let ntp_cfg = if method == "manual" {
+        Value::Null
+    } else {
+        let address = args
+            .ntp_server
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .or_else(|| cur_ntp.get("sAddress").and_then(|v| v.as_str()).map(String::from))
+            .unwrap_or_else(|| "pool.ntp.org".to_string());
+        let port = args
+            .ntp_port
+            .map(|p| p.to_string())
+            .or_else(|| cur_ntp.get("sPort").and_then(|v| v.as_str()).map(String::from))
+            .unwrap_or_else(|| "123".to_string());
+        json!({"sAddress": address, "sPort": port})
+    };
+
+    let payload = json!({
+        "sMethod": method,
+        "dNtpConfig": ntp_cfg,
+        "iTimestamp": ts,
+        "sTimezone": tz,
+    });
+    let resp = client.put_json(device, PATH_TIME, Some(&payload)).await?;
+    expect_ok(&resp, "set system time")?;
+
+    // Read-back verification — the CGI returns success for a rejected timezone.
+    let after = client.get_json(device, PATH_TIME, None).await?;
+    let mut problems: Vec<String> = Vec::new();
+    if args.timezone.is_some() && after.get("sTimezone").and_then(|v| v.as_str()) != Some(tz.as_str()) {
+        problems.push(format!(
+            "device kept timezone {:?} instead of {tz:?} (unknown or unsupported IANA \
+             name — pick one from the Web Console list)",
+            after.get("sTimezone").and_then(|v| v.as_str())
+        ));
+    }
+    if method == "manual" {
+        let drift = (after
+            .get("iTimestamp")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            - ts)
+            .abs();
+        if drift > 5 {
+            problems.push(format!(
+                "device clock is {drift}s away from the requested timestamp"
+            ));
+        }
+    }
+    anyhow::ensure!(
+        problems.is_empty(),
+        "set_system_time was applied but verification failed: {}",
+        problems.join("; ")
+    );
+    let mut out = system_time_from(&after);
+    out["verified"] = json!(true);
+    Ok(out)
 }
 
 pub async fn reboot_device(client: &ApiClient, device: &DeviceRecord) -> Result<()> {
