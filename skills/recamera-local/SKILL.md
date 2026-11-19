@@ -17,6 +17,16 @@ allowed-tools: "Bash"
 
 Controls the reCamera this agent runs on. Everything is local: the API is loopback, captures and recordings are plain file paths (open them with your own file/vision tools), and events can be awaited with one blocking call.
 
+## Observation and alert requests — read first
+
+For "look now", "watch/monitor", "alert me later", observation history, or task modification/cancellation, read **[OBSERVATION.md](OBSERVATION.md)** before acting. Its S01–S07 templates separate existing device evidence from the external task semantics. In particular:
+
+- Capture a fresh image for every current/again request and open the new local path.
+- Rules provide positive matches, not disappearance, entry/exit, exact dwell, durable tasks, or delivery retries.
+- Deterministic code owns the main loop and task state; an LLM/VLM is only a bounded observation operator.
+- Discover exact labels first. If nothing fits, ask before using an online VLM or searching/installing a model or app; never silently upload images or start training.
+- No real runner/scheduler + delivery channel means no promise of background monitoring or later alerts.
+
 ## Setup
 
 Zero configuration on stock firmware. The SDK probes `http://127.0.0.1:80` then `https://127.0.0.1:443` and reads the bearer token from `/userdata/config/system/http_key.json`. Overrides exist for unusual setups (`RECAMERA_HOST` / `RECAMERA_PORT` / `RECAMERA_PROTOCOL` / `RECAMERA_TOKEN`); ignore them otherwise.
@@ -38,7 +48,7 @@ Alternative argument forms when quoting gets awkward: `--key value`, or one sing
 
 ## Command map
 
-Full schemas (trigger kinds, detection rules, ISP sections, event shape): **[REFERENCE.md](REFERENCE.md)**. Runtime truth: `rcl <command> --help`.
+Full schemas (trigger kinds, detection rules, ISP sections, event shape): **[REFERENCE.md](REFERENCE.md)**. Observation workflow, task contracts, and S01–S07 templates: **[OBSERVATION.md](OBSERVATION.md)**. Runtime truth: `rcl <command> --help`.
 
 - **Status**: `get_status` (one-call snapshot: device, load, battery, storage, capture, record pipeline, active model — call this first), `get_device_info`, `get_resource_info`, `get_battery_status`, `get_system_time`, `set_system_time` / `probe_timezone` / `sync_system_time` (clock repair — see below), `export_device_config output=…` (snapshot config before making changes), `reboot_device` (**confirm**).
 

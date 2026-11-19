@@ -2,6 +2,8 @@
 
 The bundled SDK is the reference implementation for the skill: stdlib-only, signature-driven (each function's signature is its schema), and self-describing via `--help`.
 
+This is the primitive API catalogue. For natural-language observation requests, read [OBSERVATION.md](OBSERVATION.md) first: a positive recording rule is not a durable watch task, absence/entry/dwell state machine, or business-delivery pipeline.
+
 ## Invocation
 
 From the skill directory:

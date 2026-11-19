@@ -18,6 +18,16 @@ allowed-tools: "Bash"
 
 Drive one or more [reCamera Pro](https://wiki.seeedstudio.com/recamera_pro_getting_started/) devices: registration, AI + sound-event detection, rule-based recording, event polling, on-demand capture, storage/records, and GPIO. The bundled Python SDK (`scripts/recamera_intellisense/`, stdlib-only) is the reference implementation; the MCP server is a schema-compatible Rust surface sharing the same credential store.
 
+## Observation and alert requests — read first
+
+For "look now", "watch/monitor", "alert me later", observation history, or task modification/cancellation, read **[OBSERVATION.md](OBSERVATION.md)** before acting. Its S01–S07 templates reduce exploration and prevent unsupported promises. Non-negotiable boundaries:
+
+- A fresh `capture_image` is required for every current/again request; never present stale imagery as current.
+- Detection rules produce **positive matches and evidence**, not absence, entry/exit, exact dwell, durable task CRUD, or business retries.
+- A deterministic external runner owns scheduling, state, persistence, dedupe, and cancellation. The LLM is a bounded observation operator, not the main loop.
+- Match labels against actual model/source inventory. If no capability fits, ask the user to choose an approved online VLM, a compatible model/app search, or a narrower goal; never silently upload images or start model training.
+- Without a real runner/scheduler and delivery channel, do not claim that background monitoring or later notification is active.
+
 ## Requirements
 
 - `python3` ≥ 3.9 (stdlib only); reachable device HTTP/HTTPS API (TCP `80`/`443`)
@@ -74,7 +84,7 @@ Python in-process (preferred for loops and low-latency voice agents — avoids p
 
 ## Command map
 
-Full catalogue, per-command arguments, and key schemas: **[REFERENCE.md](REFERENCE.md)** — or `rci <command> --help` at runtime.
+Full catalogue, per-command arguments, and key schemas: **[REFERENCE.md](REFERENCE.md)** — or `rci <command> --help` at runtime. High-level observation routing, task contracts, and S01–S07 templates: **[OBSERVATION.md](OBSERVATION.md)**.
 
 - **Device**: `detect_local_device host=…`, `add_device`, `update_device`, `get_device`, `remove_device`, `list_devices` (registration probes the device before persisting).
 - **System**: `get_device_info` (firmware/sensor/serial), `get_resource_info` (CPU/NPU/mem/storage %), `get_battery_status`, `get_system_time`, `set_system_time` / `probe_timezone` / `sync_system_time` (clock repair — see "Fixing the device clock" below), `export_device_config output=./backup.tar` (snapshot config before changes), `reboot_device` (**disruptive** — drops all streams/sessions).
@@ -176,6 +186,7 @@ If neither covers the request, say so plainly instead of inventing capabilities.
 
 ## Reference pointers
 
+- **Observation task playbook**: [OBSERVATION.md](OBSERVATION.md) — deterministic control, capability routing, S01–S07 templates, and acceptance gates.
 - **Full catalogue + key schemas**: [REFERENCE.md](REFERENCE.md) · **Runtime truth**: `rci <command> --help`
 - **Sources**: `scripts/recamera_intellisense/*.py` — each command's signature is its schema.
 - **Credential store**: `~/.recamera/devices.json` (shared with the MCP server).

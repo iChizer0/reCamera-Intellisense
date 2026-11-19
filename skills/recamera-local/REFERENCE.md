@@ -3,6 +3,7 @@
 Detailed schemas for the `recamera-local` skill. Read this when constructing
 structured arguments (rules, triggers, ISP values); the command list lives in
 [SKILL.md](SKILL.md) and per-command usage in `rcl <command> --help`.
+For high-level watch/alert requests, first read [OBSERVATION.md](OBSERVATION.md): these primitives do not by themselves provide durable task or transition semantics.
 
 ## Contents
 

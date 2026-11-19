@@ -555,7 +555,7 @@ impl ReCameraServer {
     // MARK: Detection
 
     #[tool(
-        description = "Get information about available detection models on a reCamera device.",
+        description = "Discover installed vision models and their exact case-sensitive labels before planning detection. Match user intent to actual labels; never assume parcel/box detection, identity, or plate OCR. Vehicle detection is not OCR. Pair with get_record_sources for source/ROI support.",
         annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_detection_models_info(
@@ -581,7 +581,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the active detection model by model_id or model_name (provide exactly one).",
+        description = "Set the single shared active vision model by model_id or model_name (provide exactly one, discovered via get_detection_models_info). This can affect existing tasks; obtain permission before changing shared state and read back with get_detection_model before claiming verification.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -633,7 +633,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the detection schedule (equivalent to set_schedule_rule). Use null/empty to disable. Time format: 'Day HH:MM:SS'.",
+        description = "Set recurring weekly detection windows (equivalent to set_schedule_rule). Use null/empty to disable. Time format: 'Day HH:MM:SS'. This is not a one-shot task lifetime: external deterministic code must enforce relative requests such as 'next 20 minutes' and task cancellation.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -667,7 +667,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set detection rules (INFERENCE_SET trigger). Rules without source_filter default to the 'builtin' vision source; use source_filter=['acousticslab'] for sound, or set_record_trigger for an explicit all-sources rule. Source ids and labels are validated against get_record_sources first. Auto-enables record image and default storage. confidence_range_filter must be [min,max] in [0,1].",
+        description = "Install positive-match INFERENCE_SET recording rules, not a durable observation task. Rules without source_filter default to 'builtin'; use ['acousticslab'] for sound. Source ids and non-builtin labels are checked against get_record_sources; validate builtin vision labels against get_detection_models_info yourself. Auto-enables JPG writer/default storage. ROI filters matches; debounce counts frames/hops, not seconds. No absence/entry/exit/exact-dwell semantics. Only one trigger is active: preserve unrelated tasks, obtain permission, read back, and test controlled events. External code must own scheduling/state/history/notifications.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -681,11 +681,13 @@ impl ReCameraServer {
     ) -> Result<CallToolResult, ErrorData> {
         let device = try_tool!(self.resolve(&params.device_name).await);
         try_tool!(detection::set_detection_rules(&self.client, &device, &params.rules).await);
-        Ok(text_result("Detection rules set successfully."))
+        Ok(text_result(
+            "Detection recording rules updated. This does not create a durable observation task; read back configuration and verify controlled events before claiming monitoring is active.",
+        ))
     }
 
     #[tool(
-        description = "Get detection events in the inclusive RULE-time window. Returns file_events with exact numeric and decimal-string IDs, plus optional timezone metadata. Late FILE updates retain the original RULE timestamp: merge by uid/file_id and use an overlap when polling instead of only advancing the time checkpoint.",
+        description = "Get retained positive-rule events in the inclusive RULE-time window; this is not durable history or an absence signal. Defaults are bounded (normally 500 visible results for 100 seconds), and restart/TTL/capacity can discard rows. Poll promptly with overlap; merge by uid_str/file_id_str because late FILE updates keep the original RULE timestamp. Persist IDs and evidence externally. Empty output means no retained matching row, not proof nothing happened.",
         annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_detection_events(
@@ -790,7 +792,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the schedule rule (equivalent to set_detection_schedule). Use null/empty to disable. Time format: 'Day HH:MM:SS'.",
+        description = "Set recurring weekly schedule windows (equivalent to set_detection_schedule). Use null/empty to disable. Time format: 'Day HH:MM:SS'. This does not enforce a one-shot relative duration or cancel an external observation task; deterministic external code owns those semantics.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -808,7 +810,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "List recording-rule sources (id, kind, running state, producible classes). Use ids for a rule's source_filter and validate label_filter against classes BEFORE compiling rules.",
+        description = "List recording-rule sources (id, kind, running state, producible classes, supports_roi). Use ids for source_filter and validate app/acoustic labels against classes before compiling rules. For the builtin vision source, get exact labels from get_detection_models_info. ROI support filters positive matches only; it does not provide entry/exit/dwell semantics.",
         annotations(read_only_hint = true, open_world_hint = true)
     )]
     async fn get_record_sources(
@@ -916,8 +918,12 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Update the result-push config (mode 0=off/1=MQTT/2=HTTP/3=UART, mqtt/http channel fields, payload templates). Omitted fields keep stored values — secrets survive a redacted read/write cycle. The device restarts its notify service and recameraipc to apply (brief pipeline gap).",
-        annotations(read_only_hint = false, destructive_hint = false, open_world_hint = true)
+        description = "Update the shared inference-result push config (mode 0=off/1=MQTT/2=HTTP/3=UART, mqtt/http fields, payload templates). This does not create durable observation tasks, idempotency keys, business acknowledgement, or retries. Omitted fields keep stored values; never echo '***' secrets. Applying restarts notify/recameraipc (brief pipeline gap). Verify end-to-end delivery separately.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            open_world_hint = true
+        )
     )]
     async fn set_notify_config(
         &self,
@@ -1040,7 +1046,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Set the record trigger. Provide a tagged union with 'kind' = inference_set|timer|gpio|tty|http|always_on. For sound-event recording use inference_set with a rule whose source_filter=['acousticslab'] (the legacy 'sed' kind is retired).",
+        description = "Set the single shared record trigger: inference_set|timer|gpio|tty|http|always_on. Replacing it can disable an unrelated observation/recording task, so inspect current state and obtain permission first. For sound use inference_set with source_filter=['acousticslab']; legacy 'sed' is retired. Positive inference rules do not create durable task, absence, transition, or exact-dwell semantics. Read back after writing.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1427,7 +1433,7 @@ impl ReCameraServer {
     }
 
     #[tool(
-        description = "Capture a JPG image, wait for completion, and return the image bytes inline.",
+        description = "Capture a fresh JPG, wait for completion, and return its event metadata plus inline image. Use a new call for every 'now'/'again' request and bind the answer to the returned capture timestamp; never reuse stale imagery as current. On failure report failure rather than answering from an old image. No detection-rule write is needed for S01.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1552,34 +1558,6 @@ impl ServerHandler for ReCameraServer {
                 "recamera-intellisense-mcp",
                 env!("CARGO_PKG_VERSION"),
             ))
-            .with_instructions(
-                "reCamera Intellisense MCP Server. Provides tools to manage reCamera devices, \
-                 configure AI detection + sound-event detection + record triggers, query events, \
-                 capture images/video, browse recorded clips (fetch_record), and control GPIO.\n\n\
-                 Recommended workflow:\n\
-                 1) Register a device with `add_device` (or confirm one exists via `list_devices`).\n\
-                 2) Verify readiness with `get_storage_status` before writing; run `set_storage_slot` / \
-                 `configure_storage_quota` if storage is not CONFIGURED or READY.\n\
-                 3) Choose an AI model with `set_detection_model`, set a window with `set_detection_schedule`, \
-                 and install rules via `set_detection_rules` (automatically picks INFERENCE_SET).\n\
-                 4) Or configure a non-AI record trigger via `set_record_trigger` (`timer`, `gpio`, `tty`, \
-                 `http`, `always_on`). For sound-event recording, call `get_record_sources` (or \
-                 `get_active_acoustic_model`) for labels, then install an `inference_set` rule with \
-                 `source_filter`=['acousticslab']; the legacy `sed` trigger kind is retired.\n\
-                 5) Poll `get_detection_events` for recent matches and `fetch_file` / `fetch_record` to \
-                 retrieve snapshots.\n\n\
-                 Fixing the device clock/timezone: call `sync_system_time` (one bounded call). The clock \
-                 is UTC seconds and never depends on knowing the timezone first — do NOT try to resolve \
-                 the timezone via HTTPS APIs before fixing the clock: with a wrong clock, TLS certificate \
-                 validation fails and such attempts loop uselessly. All probes used by `sync_system_time` \
-                 and `probe_timezone` are broken-clock safe (UDP NTP, plain-HTTP Date/geo-IP, WiFi 802.11d \
-                 country beacons, DHCP options 100/101). When a result carries `needs_user_confirmation` \
-                 or `needs_user_help`, relay it to the user instead of retrying. The device API rejects \
-                 unknown timezones silently — `set_system_time`/`sync_system_time` re-read the device and \
-                 verify, so trust their output rather than assuming success.\n\n\
-                 For HTTPS devices, keep `allow_unsecured=false` on the trusted network and only opt in to \
-                 `true` for self-signed certs on a trusted LAN."
-                    .to_string(),
-            )
+            .with_instructions(include_str!("agent_instructions.md").to_string())
     }
 }
