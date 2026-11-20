@@ -582,6 +582,8 @@ class TestDetect(LocalSkillTest):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["rule_name"], "person")
         self.assertEqual(events[0]["snapshot_path"], "/mnt/rc_mmcblk0p8/reCamera/a.jpg")
+        self.assertEqual(events[0]["uid"], 1)
+        self.assertEqual(events[0]["uid_str"], "1")
         self.assertEqual(len(events[0]["file_events"]), 1)
         self.assertEqual(events[0]["file_events"][0]["event_uid"], 1)
         rl.clear_detection_events()
@@ -623,6 +625,78 @@ class TestDetect(LocalSkillTest):
         self.assertFalse(result["timed_out"])
         self.assertEqual([e["rule_name"] for e in result["events"]], ["new"])
         self.assertEqual(result["watermark_unix_ms"], mark + 5000)
+        self.assertIn("observed", result)
+
+    def test_wait_event_observation_covers_same_ms_rules_and_late_files(self):
+        mark = 1745152496000
+        first = {
+            "event": "RULE", "type": "INFERENCE_SET", "id": "first", "uid": 1,
+            "timestamp": mark,
+            "file_event": {"op": "ADDED", "path": "/mnt/a.jpg", "size": 10,
+                           "event_uid": 10, "timestamp": mark + 1},
+        }
+        self.st.events.append(first)
+        first["file_event"]["file_id"] = 100
+        initial = rl.wait_event(timeout_s=0.5, observed={}, poll_interval_s=0.1)
+        self.assertEqual(list(initial["observed"].values()), [["100"]])
+
+        first["file_events"] = [first.pop("file_event"), {
+            "op": "ADDED", "path": "/mnt/a.mp4", "size": 100,
+            "event_uid": 10, "file_id": 101, "timestamp": mark + 2,
+        }]
+        # A newer RULE with an older timestamp must still be visible; the second
+        # FILE shares its creator's event_uid but has a distinct file_id.
+        self.st.events.append({
+            "event": "RULE", "type": "INFERENCE_SET", "id": "second", "uid": 2,
+            "timestamp": mark - 1000,
+        })
+        updated = rl.wait_event(
+            timeout_s=0.5, observed=initial["observed"], poll_interval_s=0.1,
+        )
+        self.assertEqual({event["rule_name"] for event in updated["events"]}, {"first", "second"})
+        self.assertEqual(len(updated["events"][0]["file_events"]), 2)
+        self.assertEqual(sorted(updated["observed"].values()), [[], ["100", "101"]])
+
+        settled = rl.wait_event(
+            timeout_s=0.5, observed=updated["observed"], poll_interval_s=0.1,
+        )
+        self.assertTrue(settled["timed_out"])
+        self.assertEqual(settled["events"], [])
+
+    def test_wait_event_observation_distinguishes_reused_rule_uids(self):
+        mark = 1745152496000
+        first = {
+            "event": "RULE", "type": "INFERENCE_SET", "id": "first", "uid": 9,
+            "timestamp": mark,
+            "file_event": {"path": "/mnt/first.jpg", "event_uid": 9,
+                           "file_id": 900, "timestamp": mark + 1},
+        }
+        second = {
+            "event": "RULE", "type": "INFERENCE_SET", "id": "second", "uid": 9,
+            "timestamp": mark,
+            "file_event": {"path": "/mnt/second.jpg", "event_uid": 9,
+                           "file_id": 901, "timestamp": mark + 1},
+        }
+        self.st.events.extend((first, second))
+        initial = rl.wait_event(timeout_s=0.5, observed={}, poll_interval_s=0.1)
+        self.assertEqual(len(initial["events"]), 2)
+        self.assertEqual(len(initial["observed"]), 2)
+
+        first["file_events"] = [first.pop("file_event"), {
+            "path": "/mnt/first.mp4", "event_uid": 9,
+            "file_id": 902, "timestamp": mark + 2,
+        }]
+        updated = rl.wait_event(
+            timeout_s=0.5, observed=initial["observed"], poll_interval_s=0.1,
+        )
+        self.assertEqual([event["rule_name"] for event in updated["events"]], ["first"])
+        self.assertEqual(len(updated["events"][0]["file_events"]), 2)
+
+        settled = rl.wait_event(
+            timeout_s=0.5, observed=updated["observed"], poll_interval_s=0.1,
+        )
+        self.assertTrue(settled["timed_out"])
+        self.assertEqual(settled["events"], [])
 
     def test_wait_event_timeout_keeps_watermark(self):
         result = rl.wait_event(timeout_s=0.5, since_unix_ms=123, poll_interval_s=0.1)

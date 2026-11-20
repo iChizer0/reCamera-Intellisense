@@ -86,7 +86,7 @@ A weekly detection schedule is not a one-shot “next 20 minutes” timer; the r
 
 - `region_filter` filters supported source results by normalized ROI. It does not detect a crossing by itself.
 - `debounce_times` counts matching frames/hops, not seconds. Do not turn it into an exact dwell threshold without measured timing and scene validation.
-- `wait_event` is the low-latency local evidence wait. Feed each returned `watermark_unix_ms` back as `since_unix_ms`; never recompute it. Persist the resulting observations externally. This does not make history durable across buffer expiry, restart, or a stalled consumer.
+- `wait_event` is the low-latency local evidence wait. For complete RULE and late-FILE coverage, pass the returned `observed` map back unchanged. A row is returned for a new full RULE identity or a grown FILE set, independent of timestamp order and reused UIDs. Persist observations externally. Timestamp-only calls retain legacy RULE-only behavior. No map makes history durable across buffer expiry, restart, or a stalled consumer.
 - The daemon normally retains only a bounded recent view (default 500 visible results for 100 seconds, with separate recording-association limits). Query promptly and drain/persist what the task needs. Empty output means no retained matching row, not proof that nothing happened.
 - Fetch every relevant `file_events[].path` locally (or with `read_file`); `snapshot_path` is only the first-file/legacy fallback. Do not treat any path as a permanent historical archive after storage rotation.
 
@@ -147,8 +147,8 @@ rcl get_record_trigger
 
 # The external runner can wait for positive evidence and persist it.
 rcl wait_event timeout_s=60
-# Next call passes the returned watermark verbatim:
-rcl wait_event timeout_s=60 since_unix_ms=<returned-watermark>
+# Next call passes the returned observed map verbatim:
+rcl wait_event timeout_s=60 'observed=<returned-observed-json-object>'
 ```
 
 This device layer proves **person detected in ROI**, not entry/exit/dwell. For entry, require a valid outside/absent baseline followed by a valid inside observation. For dwell, use valid observation times and an explicit gap policy. For exit/re-entry, require valid negative observations; missing positive events alone cannot prove exit. Reset only under the confirmed outside condition to prevent continuous-presence notification spam.

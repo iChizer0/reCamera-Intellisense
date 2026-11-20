@@ -130,13 +130,22 @@ path for single-file callers — open paths directly (or `read_file`), no fetch 
 **newer than** the watermark exists, then returns:
 
 ```json
-{"events": ["..."], "watermark_unix_ms": 1745152501000, "timed_out": false}
+{"events": ["..."], "observed": {"<canonical-rule-json>": ["100", "101"]},
+ "watermark_unix_ms": 1745152501000, "timed_out": false}
 ```
 
-Loop contract: pass the returned `watermark_unix_ms` back as `since_unix_ms`.
-Omitting it starts the watermark at "now" (only future events). On timeout the
-watermark is unchanged and `timed_out` is true — safe to retry. `timeout_s`
-clamps to [0.5, 300]; default poll interval 0.25 s (`poll_interval_s`).
+Normalized rows also expose `uid`, `uid_str`, and `row_key`; the latter is the
+canonical full RULE JSON, so reused UIDs with different metadata stay distinct.
+For complete RULE and late-FILE coverage, pass the returned `observed` map back
+unchanged. It maps each full RULE identity to its seen `file_id` identities
+(creator UID plus path for legacy single-file events). A row is returned when its
+identity is new or its FILE set grows; the whole updated row is included once,
+independent of timestamp order. The map is bounded by the daemon's current retained window.
+Start with `observed={}` to drain that window once. Timestamp-only calls retain
+the legacy strictly-newer-RULE behavior and cannot recover those updates.
+Omitting cursors starts at "now" (only future events). On timeout the watermark
+and observed map are safe to retry. `timeout_s` clamps to [0.5, 300]; default poll
+interval 0.25 s (`poll_interval_s`).
 
 ## Capture
 

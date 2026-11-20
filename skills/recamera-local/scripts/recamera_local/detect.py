@@ -8,6 +8,7 @@ file's local path for compatibility with single-file callers.
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -261,14 +262,19 @@ def _normalize_event(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     ts_ms = int(ts)
     rule_id = (item.get("id") or "").strip() if isinstance(item.get("id"), str) else ""
     rule_name = rule_id or str(item.get("type", ""))
+    uid = item.get("uid") if isinstance(item.get("uid"), int) and not isinstance(item.get("uid"), bool) else -1
     file_events = _event_files(item)
     snapshot_path = file_events[0]["path"] if file_events else None
+    identity = {key: value for key, value in item.items() if key not in ("file_event", "file_events")}
     event: Dict[str, Any] = {
         "timestamp": datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
         .isoformat()
         .replace("+00:00", "Z"),
         "timestamp_unix_ms": ts_ms,
         "rule_name": rule_name,
+        "uid": uid,
+        "uid_str": str(uid),
+        "row_key": json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
         "file_events": file_events,
     }
     if snapshot_path is not None:
@@ -322,32 +328,57 @@ def clear_detection_events() -> None:
 WAIT_EVENT_MAX_TIMEOUT_S = 300.0
 
 
+def _file_identity(item: Dict[str, Any]) -> str:
+    file_id = item.get("file_id")
+    if isinstance(file_id, int) and not isinstance(file_id, bool):
+        return str(file_id)
+    # Older daemons expose only one file_event per RULE, so creator UID + path
+    # is unique there. Modern multi-file events carry the distinct file_id.
+    return f"{item.get('event_uid', -1)}:{item.get('path', '')}"
+
+
+def _observation(events: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    # UID alone is not a row identity: producers may reuse it with different
+    # metadata. The canonical full RULE JSON mirrors the daemon's full-row keys.
+    return {
+        event["row_key"]: sorted({_file_identity(item) for item in event["file_events"]})
+        for event in events
+    }
+
+
+def _wait_result(
+    events: List[Dict[str, Any]], observed: Dict[str, List[str]], watermark: int, *, timed_out: bool,
+) -> Dict[str, Any]:
+    return {
+        "events": events,
+        "observed": observed,
+        "watermark_unix_ms": watermark,
+        "timed_out": timed_out,
+    }
+
+
 def wait_event(
     *,
     timeout_s: float = 30.0,
     since_unix_ms: Optional[int] = None,
     poll_interval_s: float = 0.25,
+    observed: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, Any]:
-    """Block until at least one detection event newer than the watermark arrives.
+    """Wait for new RULE rows and late FILE additions without assuming time order.
 
-    Returns::
+    Timestamp-only calls retain the legacy strictly-newer-RULE behavior. For full
+    coverage, pass the returned ``observed`` map back unchanged on the next call.
+    It maps each canonical full RULE identity to its seen ``file_id`` identities
+    (creator UID plus path for a legacy single ``file_event``), so reused UIDs
+    cannot collapse distinct rows. A row is returned when its identity is new or
+    its FILE set gains an entry; the whole updated row is included once.
+    The map is bounded by the daemon's current retained window, and no process-global
+    state is shared between independent consumers.
 
-        {"events": [...], "watermark_unix_ms": W, "timed_out": bool}
-
-    `watermark_unix_ms` is the value to pass back as `since_unix_ms` on the
-    next call — each event is then delivered exactly once::
-
-        mark = None
-        while True:
-            r = wait_event(timeout_s=60, since_unix_ms=mark)
-            mark = r["watermark_unix_ms"]
-            for e in r["events"]:
-                ...  # e["snapshot_path"] is a local file
-
-    When `since_unix_ms` is omitted the watermark starts at "now", i.e. only
-    events that occur *after* this call are returned. `timeout_s` is clamped
-    to [0.5, 300]; on timeout the call returns with `timed_out: true` and an
-    unchanged watermark (safe to retry immediately).
+    When `since_unix_ms` is omitted the legacy watermark starts at "now".
+    `timeout_s` is clamped to [0.5, 300]; on timeout the watermark and observed
+    map are safe to retry with. Start with ``observed={}`` to drain the retained
+    window once, then keep feeding back each returned map.
     """
     timeout_s = min(max(float(timeout_s), 0.5), WAIT_EVENT_MAX_TIMEOUT_S)
     poll_interval_s = min(max(float(poll_interval_s), 0.1), 5.0)
@@ -355,25 +386,27 @@ def wait_event(
 
     deadline = time.monotonic() + timeout_s
     while True:
-        # The daemon's `start` filter is inclusive; filter strictly-newer here.
-        fresh = [
-            e
-            for e in get_detection_events(start_unix_ms=watermark)
-            if e["timestamp_unix_ms"] > watermark
-        ]
-        if fresh:
-            return {
-                "events": fresh,
-                "watermark_unix_ms": max(e["timestamp_unix_ms"] for e in fresh),
-                "timed_out": False,
-            }
+        events = get_detection_events(
+            start_unix_ms=None if observed is not None else watermark,
+        )
+        current = _observation(events)
+        if observed is not None:
+            fresh = []
+            for event in events:
+                key = event["row_key"]
+                previous = set(observed.get(key, []))
+                if key not in observed or set(current[key]) - previous:
+                    fresh.append(event)
+            if fresh:
+                return _wait_result(fresh, current, watermark, timed_out=False)
+        else:
+            fresh = [event for event in events if event["timestamp_unix_ms"] > watermark]
+            if fresh:
+                next_watermark = max(event["timestamp_unix_ms"] for event in fresh)
+                return _wait_result(fresh, current, next_watermark, timed_out=False)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return {
-                "events": [],
-                "watermark_unix_ms": watermark,
-                "timed_out": True,
-            }
+            return _wait_result([], current, watermark, timed_out=True)
         time.sleep(min(poll_interval_s, remaining))
 
 

@@ -78,9 +78,9 @@ One call: `rcl sync_system_time` (defaults `timezone=auto method=auto`). Hard-wo
 # See right now — then open the printed path with your file/vision tool
 rcl capture_image
 
-# Watch for events: blocks until one arrives; feed the watermark back
-rcl wait_event timeout_s=60                      # → {events, watermark_unix_ms, timed_out}
-rcl wait_event timeout_s=60 since_unix_ms=1745152496000
+# Watch for events: blocks until one arrives; feed the observed map back
+rcl wait_event timeout_s=60                      # → events + observed FILE sets
+rcl wait_event timeout_s=60 'observed={}'        # drain the retained window once
 
 # Person detection, with read-back verification
 rcl get_detection_models_info                    # pick a label name
@@ -108,7 +108,7 @@ rcl read_file path=/mnt/rc_mmcblk0p8/reCamera/2026-04-20/snap-001.jpg
 1. Only **one record trigger** is active at a time (`inference_set` | `timer` | `gpio` | `tty` | `http` | `always_on`). AI detection (vision or sound) → `set_detection_rules`; anything else → `set_record_trigger`. `get_detection_rules` returns `[]` when another trigger kind owns the pipeline. The legacy `sed` kind is **retired** — sound is an `inference_set` rule with `source_filter=["acousticslab"]`.
 2. `label_filter` takes label **names** — vision from `get_detection_models_info`, sound from `get_record_sources` (or `get_active_acoustic_model`) — never indexes. Compile against reality: check `get_record_sources` first; unknown source ids and unproducible labels are loud errors. Rules without `source_filter` are scoped to the `builtin` vision source (an explicit empty filter matches EVERY source, including audio).
 3. Schedules: `[{"start":"Mon 08:00:00","end":"Mon 18:00:00"}]`; `schedule=null` disables (always active).
-4. `wait_event` loops must pass the returned `watermark_unix_ms` back as `since_unix_ms` — never recompute it.
+4. For complete RULE and late-FILE coverage, `wait_event` loops must pass the returned `observed` map back unchanged. It tracks each full RULE identity's seen FILE identities (distinguishing reused UIDs) and returns new rows or rows whose FILE set grows, independent of timestamp order. Timestamp-only `since_unix_ms` calls retain legacy RULE-only behavior.
 5. After changing detection or trigger configuration, read it back (`get_detection_rules` / `get_record_trigger`) before telling the user it is done.
 6. Confirm gates: `reboot_device`, `delete_file`, and `stop_app`/`restart_app` on system apps refuse without `confirm=true` — ask the user first. `clear_detection_events` only purges the transient event buffer (recordings on disk are unaffected).
 7. `set_gpio_value` reconfigures the pin as output and `get_gpio_value` as input — both have hardware side effects.
