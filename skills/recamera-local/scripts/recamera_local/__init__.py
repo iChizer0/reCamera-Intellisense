@@ -61,7 +61,7 @@ from .trigger import (
 )
 from .video import get_video_encode, set_video_encode
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "RecameraError",

@@ -582,8 +582,31 @@ class TestDetect(LocalSkillTest):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["rule_name"], "person")
         self.assertEqual(events[0]["snapshot_path"], "/mnt/rc_mmcblk0p8/reCamera/a.jpg")
+        self.assertEqual(len(events[0]["file_events"]), 1)
+        self.assertEqual(events[0]["file_events"][0]["event_uid"], 1)
         rl.clear_detection_events()
         self.assertEqual(rl.get_detection_events(), [])
+
+    def test_events_preserve_all_associated_files(self):
+        self.st.events.append({
+            "event": "RULE", "type": "INFERENCE_SET", "id": "person", "uid": 2,
+            "timestamp": 1745152496000,
+            "file_events": [
+                {"op": "ADDED", "path": "/mnt/rc_mmcblk0p8/reCamera/a.jpg",
+                 "size": 10, "event_uid": 2, "timestamp": 1745152496001},
+                {"op": "ADDED", "path": "/mnt/rc_mmcblk0p8/reCamera/a.mp4",
+                 "size": 100, "event_uid": 3, "timestamp": 1745152496002},
+            ],
+        })
+        events = rl.get_detection_events(start_unix_ms=1745152496000)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["snapshot_path"], "/mnt/rc_mmcblk0p8/reCamera/a.jpg")
+        self.assertEqual(
+            [item["path"] for item in events[0]["file_events"]],
+            ["/mnt/rc_mmcblk0p8/reCamera/a.jpg", "/mnt/rc_mmcblk0p8/reCamera/a.mp4"],
+        )
+        self.assertEqual(events[0]["file_events"][1]["event_uid"], 3)
+        self.assertEqual(events[0]["file_events"][1]["size"], 100)
 
     def test_wait_event_blocks_until_fresh_event(self):
         mark = 1745152496000

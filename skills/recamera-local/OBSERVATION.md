@@ -88,7 +88,7 @@ A weekly detection schedule is not a one-shot “next 20 minutes” timer; the r
 - `debounce_times` counts matching frames/hops, not seconds. Do not turn it into an exact dwell threshold without measured timing and scene validation.
 - `wait_event` is the low-latency local evidence wait. Feed each returned `watermark_unix_ms` back as `since_unix_ms`; never recompute it. Persist the resulting observations externally. This does not make history durable across buffer expiry, restart, or a stalled consumer.
 - The daemon normally retains only a bounded recent view (default 500 visible results for 100 seconds, with separate recording-association limits). Query promptly and drain/persist what the task needs. Empty output means no retained matching row, not proof that nothing happened.
-- `snapshot_path` is a local path: open it directly or use `read_file`. Do not treat it as a permanent historical archive after storage rotation.
+- Fetch every relevant `file_events[].path` locally (or with `read_file`); `snapshot_path` is only the first-file/legacy fallback. Do not treat any path as a permanent historical archive after storage rotation.
 
 Keep **positive**, **negative**, **unknown**, **capture failure**, and **no retained event** distinct. Occlusion, blur, and ambiguous model output are unknown; device/capture failure creates no observation. Neither a gap nor an empty event query proves departure, absence, recovery, or continuing dwell.
 

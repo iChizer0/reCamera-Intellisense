@@ -1,8 +1,9 @@
 """Detection: models, rules facade, events, and the blocking `wait_event`.
 
 Events come from the on-device intellisense daemon (`/api/v1/intellisense/events`),
-normalized to `{timestamp, timestamp_unix_ms, rule_name, snapshot_path?}` —
-`snapshot_path` is a local file the agent can open directly.
+normalized to `{timestamp, timestamp_unix_ms, rule_name, file_events, snapshot_path?}`.
+Every associated file is retained in `file_events`; `snapshot_path` is the first
+file's local path for compatibility with single-file callers.
 """
 
 from __future__ import annotations
@@ -236,6 +237,23 @@ def set_detection_rules(
 
 
 
+def _event_files(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Retain every associated file; a legacy file_event becomes one entry."""
+    if "file_events" in item:
+        candidates = item["file_events"] if isinstance(item["file_events"], list) else []
+    else:
+        legacy = item.get("file_event")
+        candidates = [legacy] if isinstance(legacy, dict) else []
+    files: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        path = candidate.get("path")
+        if isinstance(path, str) and path:
+            files.append(dict(candidate))
+    return files
+
+
 def _normalize_event(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     ts = item.get("timestamp")
     if not isinstance(ts, (int, float)):
@@ -243,18 +261,15 @@ def _normalize_event(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     ts_ms = int(ts)
     rule_id = (item.get("id") or "").strip() if isinstance(item.get("id"), str) else ""
     rule_name = rule_id or str(item.get("type", ""))
-    file_event = item.get("file_event")
-    snapshot_path: Optional[str] = None
-    if isinstance(file_event, dict):
-        p = file_event.get("path")
-        if isinstance(p, str) and p:
-            snapshot_path = p
+    file_events = _event_files(item)
+    snapshot_path = file_events[0]["path"] if file_events else None
     event: Dict[str, Any] = {
         "timestamp": datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
         .isoformat()
         .replace("+00:00", "Z"),
         "timestamp_unix_ms": ts_ms,
         "rule_name": rule_name,
+        "file_events": file_events,
     }
     if snapshot_path is not None:
         event["snapshot_path"] = snapshot_path

@@ -117,11 +117,14 @@ Normalized event (from `get_detection_events` / `wait_event`):
 
 ```json
 {"timestamp": "2026-04-20T12:34:56Z", "timestamp_unix_ms": 1745152496000,
- "rule_name": "front-door-person", "snapshot_path": "/mnt/rc_mmcblk0p8/reCamera/....jpg"}
+ "rule_name": "front-door-person", "snapshot_path": "/mnt/rc_mmcblk0p8/reCamera/....jpg",
+ "file_events": [{"op": "ADDED", "path": "/mnt/rc_mmcblk0p8/reCamera/....jpg",
+                  "size": 12345, "event_uid": 1, "timestamp": 1745152496001}]}
 ```
 
-`snapshot_path` is present when the writer produced a file; it is a local
-path — open it directly (or `read_file`), no fetch needed.
+`file_events` retains every associated snapshot/video and its metadata. A legacy
+`file_event` becomes one entry. `snapshot_path` remains the first file's local
+path for single-file callers — open paths directly (or `read_file`), no fetch needed.
 
 `wait_event timeout_s=60 since_unix_ms=1745152496000` blocks until an event
 **newer than** the watermark exists, then returns:
